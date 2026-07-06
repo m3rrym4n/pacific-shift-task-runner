@@ -46,6 +46,8 @@ docker build -t pacific-shift-task-runner:test -f Dockerfile.test .
 docker run --rm pacific-shift-task-runner:test
 ```
 
+Verified via automated end-to-end dispatch.
+
 ### Dedicated Codex runner
 
 Build and run the non-interactive runner separately from any interactive Codex container. Its Codex authentication is stored in a named volume.
