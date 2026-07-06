@@ -1,3 +1,5 @@
+FROM docker:27-cli AS docker-cli
+
 FROM node:22-bookworm-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
@@ -8,6 +10,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global @openai/codex \
     && python3 -m venv /opt/venv
+
+# Use the host daemon through its mounted socket; do not run a daemon here.
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 
 WORKDIR /app
 COPY requirements.txt .
