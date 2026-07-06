@@ -6,7 +6,7 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://codex-runner:7000"}` |
+| `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://192.168.1.68:7000"}` |
 | `TASK_RUNNER_DATABASE` | `/data/tasks.db` | SQLite database path |
 | `TASK_RUNNER_TIMEOUT_SECONDS` | `600` | Hard orchestration timeout |
 | `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
@@ -32,7 +32,7 @@ docker run -d \
   --restart unless-stopped \
   -p 6002:6002 \
   -v pacific-shift-task-runner-data:/data \
-  -e 'TASK_RUNNER_RUNNERS={"codex":"http://codex-runner:7000"}' \
+  -e 'TASK_RUNNER_RUNNERS={"codex":"http://192.168.1.68:7000"}' \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-task-runner:latest
 ```
@@ -47,3 +47,32 @@ docker run --rm pacific-shift-task-runner:test
 ```
 
 Verified via automated end-to-end dispatch.
+
+### Dedicated Codex runner
+
+Build and run the non-interactive runner separately from any interactive Codex container. Its Codex authentication is stored in a named volume.
+
+```bash
+docker build -t pacific-shift-codex-runner:latest codex_runner
+docker volume create pacific-shift-codex-runner-auth
+
+docker run --rm -it \
+  -v pacific-shift-codex-runner-auth:/home/codex/.codex \
+  pacific-shift-codex-runner:latest codex login --device-auth
+
+docker run -d \
+  --name codex-runner \
+  --restart unless-stopped \
+  --privileged \
+  -p 7000:7000 \
+  -v pacific-shift-codex-runner-auth:/home/codex/.codex \
+  -e 'GITHUB_TOKEN=<redacted>' \
+  pacific-shift-codex-runner:latest
+```
+
+Privileged mode allows Codex's own `workspace-write` sandbox to create and
+configure its nested Linux namespace. The image still runs as the non-root
+`codex` user. Supply `GITHUB_TOKEN` at runtime so the dispatched agent can
+clone, push, and open its PR. Test the runner image with `docker build -t
+pacific-shift-codex-runner:test -f codex_runner/Dockerfile.test codex_runner &&
+docker run --rm pacific-shift-codex-runner:test`.
