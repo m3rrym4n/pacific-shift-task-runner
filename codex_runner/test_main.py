@@ -41,3 +41,13 @@ def test_unknown_execution_returns_404():
 def test_repo_validation():
     with TestClient(main.app) as client:
         assert client.post("/execute", json={"repo": "invalid", "prompt": "x"}).status_code == 422
+
+
+def test_runner_prompt_requires_agent_owned_clone_and_github_workflow():
+    request = main.ExecuteRequest(repo="owner/repo", issue_number=3, prompt="issue prompt")
+
+    prompt = main._runner_prompt(request)
+
+    assert "clone that repository" in prompt
+    assert "use `git` and `gh`" in prompt
+    assert prompt.endswith("issue prompt\n")

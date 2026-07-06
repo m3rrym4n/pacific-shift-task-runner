@@ -78,11 +78,25 @@ def _final_message(output: str) -> str:
     return final
 
 
-async def _run(execution: Execution, prompt: str) -> None:
+def _runner_prompt(request: ExecuteRequest) -> str:
+    return f"""# Runner workspace
+
+This is a fresh, intentionally empty workspace for {request.repo}. Use shell
+commands to clone that repository into the current directory, then perform all
+required git and GitHub operations yourself. `GITHUB_TOKEN` is available and
+the `gh` CLI is installed and authenticated. Do not use GitHub MCP mutation
+tools; use `git` and `gh` from the shell so the non-interactive run does not
+pause for connector approval.
+
+{request.prompt}
+"""
+
+
+async def _run(execution: Execution, request: ExecuteRequest) -> None:
     command = [
         "codex",
         "exec",
-        prompt,
+        _runner_prompt(request),
         "--json",
         "--sandbox",
         "workspace-write",
@@ -132,7 +146,7 @@ def health() -> dict[str, str]:
 @app.post("/execute", status_code=status.HTTP_202_ACCEPTED)
 async def execute(request: ExecuteRequest) -> dict[str, str]:
     execution = store.create()
-    execution.task = asyncio.create_task(_run(execution, request.prompt))
+    execution.task = asyncio.create_task(_run(execution, request))
     return {"execution_id": execution.id}
 
 
