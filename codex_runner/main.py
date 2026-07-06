@@ -80,7 +80,14 @@ def _final_message(output: str) -> str:
 
 async def _run(execution: Execution, prompt: str) -> None:
     command = [
-        "codex", "exec", prompt, "--json", "--sandbox", "workspace-write", "--full-auto"
+        "codex",
+        "exec",
+        prompt,
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--full-auto",
+        "--skip-git-repo-check",
     ]
     try:
         execution.process = await asyncio.create_subprocess_exec(
