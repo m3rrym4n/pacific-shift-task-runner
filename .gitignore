@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*_key
+*_key.pub
+
+# Data
+data/
+*.sqlite3
+*.db
+
+# Docker
+*.log
+
+# OS
+.DS_Store
