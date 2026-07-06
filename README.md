@@ -23,10 +23,21 @@ Required endpoints are `POST /execute`, `GET /status/{execution_id}`, and `GET /
 
 ```bash
 docker build -t pacific-shift-task-runner:latest .
-docker run --rm -p 6002:6002 -v pacific-shift-task-runner-data:/data \
+
+docker stop pacific-shift-task-runner
+docker rm pacific-shift-task-runner
+
+docker run -d \
+  --name pacific-shift-task-runner \
+  --restart unless-stopped \
+  -p 6002:6002 \
+  -v pacific-shift-task-runner-data:/data \
   -e 'TASK_RUNNER_RUNNERS={"codex":"http://codex-runner:7000"}' \
+  -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-task-runner:latest
 ```
+
+Supply `GITHUB_TOKEN` at runtime; do not store the token in the repository.
 
 Run tests in Docker:
 
