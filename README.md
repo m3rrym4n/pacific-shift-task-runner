@@ -61,16 +61,16 @@ docker run --rm -it \
 docker run -d \
   --name codex-runner \
   --restart unless-stopped \
-  --security-opt seccomp=unconfined \
+  --privileged \
   -p 7000:7000 \
   -v pacific-shift-codex-runner-auth:/home/codex/.codex \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-codex-runner:latest
 ```
 
-The seccomp option allows Codex's own `workspace-write` sandbox to create its
-Linux namespace inside the dedicated container. Supply `GITHUB_TOKEN` at
-runtime so the dispatched agent can clone, push, and open its PR. Test the
-runner image with `docker build -t pacific-shift-codex-runner:test -f
-codex_runner/Dockerfile.test codex_runner && docker run --rm
-pacific-shift-codex-runner:test`.
+Privileged mode allows Codex's own `workspace-write` sandbox to create and
+configure its nested Linux namespace. The image still runs as the non-root
+`codex` user. Supply `GITHUB_TOKEN` at runtime so the dispatched agent can
+clone, push, and open its PR. Test the runner image with `docker build -t
+pacific-shift-codex-runner:test -f codex_runner/Dockerfile.test codex_runner &&
+docker run --rm pacific-shift-codex-runner:test`.
