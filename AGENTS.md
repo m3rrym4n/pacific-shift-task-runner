@@ -134,7 +134,10 @@ GitHub issues are authoritative. If there is a conflict between prompt instructi
 7. Run tests inside Docker.
 8. Rebuild and redeploy using the deployment pattern above.
 9. Verify startup and core functionality.
-10. Commit using the issue reference format: `#NNN Short description`
+10. Commit using the issue reference format: `#NNN Short description`.
+11. Create a branch if not already on one (`work/issue-NNN`), push it to origin, and open a pull request against `main` referencing the issue number.
+12. Do not merge the PR. Include the Final Reporting Standard content (completed work, test results, skipped work, known limitations, deployment verification, readiness statement) in the PR description, not just in chat/terminal output.
+13. Never commit or push directly to `main`. Every change lands via a reviewed PR, even for solo/manual dispatch runs.
 
 ---
 
@@ -150,6 +153,8 @@ Do not:
 - Skip tests.
 - Skip deployment verification.
 - Batch unrelated issues together.
+- Commit or push directly to `main`.
+- Merge your own PR.
 
 Prefer:
 - Environment variables for configuration.
@@ -157,6 +162,7 @@ Prefer:
 - Existing architecture patterns over new abstractions.
 - Backward-compatible changes.
 - Incremental implementation over large refactors.
+- A branch + PR for every change, no exceptions.
 
 ---
 
