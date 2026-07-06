@@ -89,6 +89,7 @@ curl http://localhost:6002/
 ```
 
 The Codex runner container is built and deployed the same way, under its own name and internal port, and registered in the orchestrator's runner registry.
+It includes the Docker CLI and Buildx plugin and mounts the host Docker socket, with the socket's group added to the non-root `codex` user at container startup. Dispatched Codex tasks can therefore build, replace, start, and inspect containers through the host Docker daemon; no Docker daemon runs inside `codex-runner`.
 
 ---
 

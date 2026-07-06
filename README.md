@@ -64,15 +64,21 @@ docker run -d \
   --name codex-runner \
   --restart unless-stopped \
   --privileged \
+  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
   -p 7000:7000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v pacific-shift-codex-runner-auth:/home/codex/.codex \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-codex-runner:latest
+
+docker exec codex-runner docker version
+docker exec codex-runner docker ps
 ```
 
 Privileged mode allows Codex's own `workspace-write` sandbox to create and
-configure its nested Linux namespace. The image still runs as the non-root
-`codex` user. Supply `GITHUB_TOKEN` at runtime so the dispatched agent can
-clone, push, and open its PR. Test the runner image with `docker build -t
+configure its nested Linux namespace. The host Docker socket and its group ID
+give the non-root `codex` user access to the host daemon; the image contains
+the Docker CLI and Buildx plugin, but no Docker daemon. Supply `GITHUB_TOKEN`
+at runtime so the dispatched agent can clone, push, and open its PR. Test the runner image with `docker build -t
 pacific-shift-codex-runner:test -f codex_runner/Dockerfile.test codex_runner &&
 docker run --rm pacific-shift-codex-runner:test`.
