@@ -102,6 +102,10 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
         "workspace-write",
         "--full-auto",
         "--skip-git-repo-check",
+        "--config",
+        "sandbox_workspace_write.network_access=true",
+        "--config",
+        "shell_environment_policy.inherit=all",
     ]
     try:
         execution.process = await asyncio.create_subprocess_exec(
