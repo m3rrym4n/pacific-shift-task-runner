@@ -45,3 +45,5 @@ Run tests in Docker:
 docker build -t pacific-shift-task-runner:test -f Dockerfile.test .
 docker run --rm pacific-shift-task-runner:test
 ```
+
+Verified via automated end-to-end dispatch.
