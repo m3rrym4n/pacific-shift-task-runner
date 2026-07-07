@@ -1,6 +1,6 @@
 # Pacific Shift Labs Codex Prompt Standard
 
-Version: 1.2
+Version: 1.3
 Status: Active
 Applies To: CrateSpy, Publisher, Task Runner, Selectr, and future Pacific Shift Labs projects
 
@@ -237,6 +237,27 @@ Every Codex execution report should include:
 
 Any failed command, failed test, failed build, failed push, or failed startup check must be disclosed in the final report, even if later resolved. Include the failed command, failure summary, fix applied, and passing retest command.
 
+### 8.1 GitHub as Single Source of Truth for Reports
+
+Write the full Final Report to a local file before using it anywhere (e.g. `/tmp/<issue-number>-report.md`). Do not construct the report as an inline shell string — inline strings containing backticks, quotes, or embedded newlines are a known source of corrupted PR descriptions.
+
+Use that file for both:
+
+- The PR description: `gh pr create --body-file <file>` or `gh pr edit <pr-number> --body-file <file>`
+- A comment on the originating GitHub issue: `gh issue comment <issue-number> --body-file <file>`
+
+Post the issue comment every time a task completes, fails, or is blocked — not only on success. GitHub is the single source of truth for what happened on any given task; do not rely on the report reaching the requester through any other channel.
+
+### 8.2 Never Post Secrets to GitHub
+
+Issue comments and PR descriptions are durable, and on public repositories, world-readable. Before writing any report, comment, PR body, or commit message:
+
+- Never include actual token, key, password, or credential values, even partially or truncated.
+- If confirming a credential is present or working, state only that fact (e.g. "GITHUB_TOKEN is set and authenticated") — never the value itself.
+- Before including raw command output (environment dumps, config file contents, `auth.json` contents, API/curl responses, `gh auth token`, `docker exec ... env`, etc.), scan it for anything resembling a secret — long hex/base64 strings, JWTs, `Bearer ...` headers, or any key containing `token`, `key`, `password`, `secret` — and redact the value, replacing it with `<redacted>`.
+- This applies to everything written to GitHub: commit messages, PR descriptions, PR comments, and issue comments — not only the final report.
+- When in doubt, redact. A less detailed report is always preferable to one real leaked credential.
+
 ## 9. Scope Guardrail Standard
 
 Every milestone execution prompt should explicitly define:
@@ -267,6 +288,8 @@ Avoid:
 - Assuming `pytest` exists on the host
 - Skipping tests
 - Skipping deployment verification
+- Posting secrets, tokens, or credential values to GitHub comments, PR bodies, or commit messages
+- Constructing PR bodies or issue comments as inline shell strings instead of writing the report to a file first
 
 ## 11. Pacific Shift Labs Philosophy
 
