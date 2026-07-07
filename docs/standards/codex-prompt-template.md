@@ -1,6 +1,6 @@
 # Pacific Shift Labs Codex Prompt Standard
 
-Version: 1.3
+Version: 1.4
 Status: Active
 Applies To: CrateSpy, Publisher, Task Runner, Selectr, and future Pacific Shift Labs projects
 
@@ -15,6 +15,7 @@ The goals are to:
 - Improve consistency between projects.
 - Improve reliability of automated development workflows.
 - Ensure Codex works from documented requirements rather than assumptions.
+- Avoid wasting execution time on optional or already-deprioritized tooling paths.
 
 ## 2. Core Principles
 
@@ -144,6 +145,43 @@ docker run --rm -p 6002:6002 --name <container> <image>
 
 Use the repository's established Docker patterns rather than assuming a specific command.
 
+### 4.4 Docker Compose Gate
+
+Docker Compose is not the default validation path.
+
+Do not run `docker compose` or `docker-compose` commands as exploratory validation.
+
+Do not run Compose commands merely because a Compose file exists.
+
+Compose commands are allowed only when at least one of these is true:
+
+- The GitHub issue explicitly requires Compose.
+- Repository documentation explicitly identifies Compose as the required validation path for the current task.
+- Plain Docker validation is not sufficient and Codex explains why before using Compose.
+
+Before using Compose, Codex must:
+
+1. Confirm Compose is available.
+2. Identify the repository instruction or technical reason requiring Compose.
+3. Use the smallest Compose command necessary.
+4. Disclose the reason in the final report.
+
+If Compose is not required, use plain Docker first.
+
+Preferred Task Runner validation pattern unless the issue or repo docs require otherwise. This repo has two separate containers — build and run whichever one the issue actually touches, not both by default:
+
+```bash
+docker build -t pacific-shift-task-runner:<issue-id> .
+docker run --rm -p 6002:6002 --name task-runner-<issue-id> pacific-shift-task-runner:<issue-id>
+```
+
+```bash
+docker build -t pacific-shift-codex-runner:<issue-id> codex_runner
+docker run --rm -p 7000:7000 --name codex-runner-<issue-id> pacific-shift-codex-runner:<issue-id>
+```
+
+Do not branch into optional validation paths unless the first valid path fails.
+
 ## 5. Standard Codex Prompt Structure
 
 Every substantial Codex prompt should use numbered sections.
@@ -191,6 +229,10 @@ Do not assume `pytest` is installed on the host.
 
 Do not assume Docker Compose is installed on the host.
 
+Use the narrowest validation path that satisfies the issue and this standards document.
+
+Do not spend execution time exploring optional tooling paths when the standard path is already sufficient.
+
 ### 6.5 Commit
 
 Commit using issue references.
@@ -236,6 +278,8 @@ Every Codex execution report should include:
 - Readiness statement
 
 Any failed command, failed test, failed build, failed push, or failed startup check must be disclosed in the final report, even if later resolved. Include the failed command, failure summary, fix applied, and passing retest command.
+
+If Docker Compose was used, the final report must include why Compose was required under section 4.4.
 
 ### 8.1 GitHub as Single Source of Truth for Reports
 
@@ -285,9 +329,12 @@ Avoid:
 - Implementing future milestone work
 - Assuming host tooling exists
 - Assuming Docker Compose exists
+- Running Docker Compose as exploratory validation
+- Running Docker Compose just because a Compose file exists
 - Assuming `pytest` exists on the host
 - Skipping tests
 - Skipping deployment verification
+- Trying multiple validation approaches when the first standards-compliant path is sufficient
 - Posting secrets, tokens, or credential values to GitHub comments, PR bodies, or commit messages
 - Constructing PR bodies or issue comments as inline shell strings instead of writing the report to a file first
 
