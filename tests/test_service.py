@@ -48,6 +48,55 @@ class FakeRunner:
         return self.codex_version_data
 
 
+class BlockingRunner:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.finish = asyncio.Event()
+        self.executions = []
+
+    async def execute(self, url, repo, issue_number, prompt):
+        self.executions.append((url, repo, issue_number))
+        self.started.set()
+        return f"execution-{len(self.executions)}"
+
+    async def status(self, url, execution_id):
+        if not self.finish.is_set():
+            return {"status": "running"}
+        return {"status": "completed"}
+
+    async def result(self, url, execution_id):
+        return {"result": execution_id, "log": "done"}
+
+    async def cancel(self, url, execution_id):
+        return True
+
+    async def codex_version(self, url):
+        return {"installed": "0.144.1", "latest": "0.144.1", "drift_detected": False}
+
+
+class PerRunnerStatusRunner:
+    def __init__(self, terminal_status_by_url):
+        self.terminal_status_by_url = terminal_status_by_url
+        self.executions = []
+
+    async def execute(self, url, repo, issue_number, prompt):
+        self.executions.append((url, repo, issue_number))
+        return f"{url}-execution-{len(self.executions)}"
+
+    async def status(self, url, execution_id):
+        return {"status": self.terminal_status_by_url[url]}
+
+    async def result(self, url, execution_id):
+        status = self.terminal_status_by_url[url]
+        return {"result": status, "log": f"{url} log", "error": "injected failure" if status == "failed" else None}
+
+    async def cancel(self, url, execution_id):
+        return True
+
+    async def codex_version(self, url):
+        return {"installed": "0.144.1", "latest": "0.144.1", "drift_detected": False}
+
+
 def make_service(tmp_path, runner, **overrides):
     values = dict(database_path=str(tmp_path / "tasks.db"), runners={"codex": "http://runner"}, poll_interval_seconds=0)
     values.update(overrides)
@@ -105,9 +154,13 @@ def test_settings_reads_ops_image_checks(monkeypatch):
 async def test_real_dispatch_lifecycle_and_tools(tmp_path):
     runner = FakeRunner(result={"result": "structured report", "log": "abc"})
     service = make_service(tmp_path, runner)
-    task_id = await service.run_task("owner/repo", 2, "codex")
+    receipt = await service.run_task("owner/repo", 2, "codex")
+    task_id = receipt["task_id"]
     await asyncio.gather(*service._jobs)
 
+    assert receipt["status"] == "running"
+    assert receipt["position"] == 0
+    assert receipt["queue_length"] == 1
     assert "instructions" in runner.prompt and "Test issue" in runner.prompt
     assert service.get_task_result(task_id)["result"] == "structured report"
     assert service.get_task_log(task_id)["log"] == "abc"
@@ -118,7 +171,8 @@ async def test_real_dispatch_lifecycle_and_tools(tmp_path):
 async def test_timeout_is_persisted_and_cancellation_attempted(tmp_path):
     runner = FakeRunner(statuses=[{"status": "running"}] * 100)
     service = make_service(tmp_path, runner, timeout_seconds=0.01, poll_interval_seconds=0.005)
-    task_id = await service.run_task("owner/repo", 2, "codex")
+    receipt = await service.run_task("owner/repo", 2, "codex")
+    task_id = receipt["task_id"]
     await asyncio.gather(*service._jobs)
 
     result = service.get_task_result(task_id)
@@ -157,7 +211,8 @@ async def test_startup_resumes_running_task_and_records_completed_result(tmp_pat
 async def test_output_cap_is_visible(tmp_path):
     runner = FakeRunner(result={"result": "done", "log": "x" * 100})
     service = make_service(tmp_path, runner, output_cap_bytes=60)
-    task_id = await service.run_task("owner/repo", 2, "codex")
+    receipt = await service.run_task("owner/repo", 2, "codex")
+    task_id = receipt["task_id"]
     await asyncio.gather(*service._jobs)
 
     log = service.get_task_log(task_id)
@@ -200,6 +255,65 @@ async def test_scheduler_fires_configured_task_without_manual_dispatch(tmp_path)
     assert tasks[0]["issue_number"] == 2
     assert tasks[0]["runner"] == "codex"
     assert tasks[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_busy_runner_returns_queued_position_without_starting_second_task(tmp_path):
+    runner = BlockingRunner()
+    service = make_service(tmp_path, runner, poll_interval_seconds=0.001)
+
+    first = await service.run_task("owner/repo", 2, "codex")
+    await asyncio.wait_for(runner.started.wait(), timeout=1)
+    second = await service.run_task("owner/repo", 3, "codex")
+
+    assert first["status"] == "running"
+    assert first["position"] == 0
+    assert first["queue_length"] == 1
+    assert second["status"] == "queued"
+    assert second["position"] == 1
+    assert second["queue_length"] == 2
+    assert len(runner.executions) == 1
+
+    runner.finish.set()
+    await asyncio.gather(*service._jobs)
+    assert len(runner.executions) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_active_item_halts_runner_queue_and_logs(tmp_path, caplog):
+    runner = PerRunnerStatusRunner({"http://runner": "failed"})
+    service = make_service(tmp_path, runner)
+
+    first = await service.run_task("owner/repo", 2, "codex")
+    second = await service.run_task("owner/repo", 3, "codex")
+    await asyncio.gather(*service._jobs)
+
+    assert service.get_task_result(first["task_id"])["status"] == "failed"
+    assert service.get_task_result(second["task_id"])["status"] == "queued"
+    assert len(runner.executions) == 1
+    assert "Runner queue 'codex' halted" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_halted_runner_queue_does_not_block_other_runner(tmp_path, caplog):
+    runner = PerRunnerStatusRunner({"http://codex": "failed", "http://gemini": "completed"})
+    service = make_service(
+        tmp_path,
+        runner,
+        runners={"codex": "http://codex", "gemini": "http://gemini"},
+    )
+
+    failed = await service.run_task("owner/repo", 2, "codex")
+    stuck = await service.run_task("owner/repo", 3, "codex")
+    other = await service.run_task("owner/repo", 4, "gemini")
+    await asyncio.gather(*service._jobs)
+
+    assert service.get_task_result(failed["task_id"])["status"] == "failed"
+    assert service.get_task_result(stuck["task_id"])["status"] == "queued"
+    assert service.get_task_result(other["task_id"])["status"] == "completed"
+    assert [execution[0] for execution in runner.executions].count("http://codex") == 1
+    assert [execution[0] for execution in runner.executions].count("http://gemini") == 1
+    assert "Runner queue 'codex' halted" in caplog.text
 
 
 @pytest.mark.asyncio
