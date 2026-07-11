@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 
 
-ExecutionStatus = Literal["running", "completed", "failed", "timeout"]
+ExecutionStatus = Literal["running", "completed", "failed", "timeout", "quota_exceeded"]
 
 
 class ExecuteRequest(BaseModel):
@@ -39,6 +40,7 @@ class Execution:
     log: str = ""
     error: str | None = None
     exit_code: int | None = None
+    resets_at: str | None = None
     task: asyncio.Task[None] | None = field(default=None, repr=False)
 
 
@@ -107,6 +109,59 @@ def _final_message(output: str) -> str:
     return final
 
 
+_QUOTA_PHRASES = ("usage limit", "reached your")
+_RESET_PHRASE_PATTERN = re.compile(r"try again in\s+([0-9]+h\s*[0-9]*m?|[0-9]+m)", re.IGNORECASE)
+
+
+@dataclass
+class QuotaExhaustion:
+    resets_at: str | None
+
+
+def _detect_quota_exhaustion(output: str) -> QuotaExhaustion | None:
+    """Detect Codex quota/rate-limit exhaustion as a distinct condition.
+
+    Primary path: parse `token_count` JSONL events for a `rate_limits` payload
+    with per-scope `used_percent`/`resets_at` fields. Fallback path: match
+    known quota-exhaustion phrasing in the raw output, for cases where a
+    structured event isn't present. Detection relies only on this task's own
+    output/exit behavior, not on querying Codex's separate self-reported
+    `/status` (which has a known "phantom limit" discrepancy upstream).
+    """
+    resets_at: str | None = None
+    quota_detected = False
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") != "token_count":
+            continue
+        rate_limits = event.get("rate_limits")
+        if not isinstance(rate_limits, dict):
+            continue
+        for scope in ("primary", "secondary"):
+            bucket = rate_limits.get(scope)
+            if not isinstance(bucket, dict):
+                continue
+            used_percent = bucket.get("used_percent")
+            if isinstance(used_percent, (int, float)) and used_percent >= 100:
+                quota_detected = True
+                candidate = bucket.get("resets_at") or rate_limits.get("resets_at")
+                if isinstance(candidate, str):
+                    resets_at = candidate
+
+    if quota_detected:
+        return QuotaExhaustion(resets_at=resets_at)
+
+    lowered = output.lower()
+    if any(phrase in lowered for phrase in _QUOTA_PHRASES):
+        match = _RESET_PHRASE_PATTERN.search(output)
+        return QuotaExhaustion(resets_at=match.group(1) if match else None)
+
+    return None
+
+
 def _runner_prompt(request: ExecuteRequest) -> str:
     return f"""# Runner workspace
 
@@ -148,7 +203,14 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
         execution.exit_code = execution.process.returncode
         execution.log = stdout.decode("utf-8", errors="replace")
         execution.result = _final_message(execution.log)
-        if execution.exit_code == 0:
+        quota = _detect_quota_exhaustion(execution.log)
+        if quota is not None:
+            execution.status = "quota_exceeded"
+            execution.resets_at = quota.resets_at
+            execution.error = "Codex usage limit reached." + (
+                f" Resets at {quota.resets_at}." if quota.resets_at else ""
+            )
+        elif execution.exit_code == 0:
             execution.status = "completed"
         else:
             execution.status = "failed"
@@ -208,6 +270,7 @@ def execution_result(execution_id: str) -> dict[str, str | int | None]:
         "log": execution.log,
         "error": execution.error,
         "exit_code": execution.exit_code,
+        "resets_at": execution.resets_at,
     }
 
 
