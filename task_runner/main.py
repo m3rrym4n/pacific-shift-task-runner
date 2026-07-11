@@ -46,8 +46,12 @@ mcp_app = mcp.streamable_http_app()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.initialize()
+    service.start_scheduler()
     async with mcp.session_manager.run():
-        yield
+        try:
+            yield
+        finally:
+            await service.stop_scheduler()
 
 
 app = FastAPI(title="Pacific Shift Task Runner", lifespan=lifespan)
