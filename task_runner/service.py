@@ -10,6 +10,7 @@ from .config import OpsImageCheck, ScheduledTask, Settings
 from .database import Database
 from .dockhand import ContainerDeployResult, DockhandClient
 from .github import GitHubClient
+from .ops_images import codex_runner_tag
 from .runner import RunnerClient
 
 
@@ -22,6 +23,13 @@ class RunnerQueue:
     pending: deque[str] = field(default_factory=deque)
     active_task_id: str | None = None
     halted: bool = False
+
+
+@dataclass(frozen=True)
+class OpsImageRebuildJob:
+    check: OpsImageCheck
+    installed_version: str
+    target_version: str
 
 
 class TaskService:
@@ -40,6 +48,7 @@ class TaskService:
         self.dockhand = dockhand
         self._jobs: set[asyncio.Task] = set()
         self._scheduler_jobs: set[asyncio.Task] = set()
+        self._internal_ops_jobs: dict[str, OpsImageRebuildJob] = {}
         self._queue_lock = asyncio.Lock()
         self._runner_queues = {name: RunnerQueue() for name in settings.runners}
         self.logger = logging.getLogger(__name__)
@@ -163,7 +172,7 @@ class TaskService:
                 task_id = queue.pending.popleft()
                 queue.active_task_id = task_id
             try:
-                await self._dispatch(task_id)
+                await self._dispatch_or_run_internal(task_id)
                 task = self.database.get(task_id) or {}
                 if task.get("status") != "completed":
                     self.logger.error(
@@ -189,6 +198,13 @@ class TaskService:
                     if queue.active_task_id == task_id:
                         queue.active_task_id = None
 
+    async def _dispatch_or_run_internal(self, task_id: str) -> None:
+        ops_job = self._internal_ops_jobs.get(task_id)
+        if ops_job is not None:
+            await self._run_ops_image_rebuild(task_id, ops_job)
+            return
+        await self._dispatch(task_id)
+
     async def _dispatch(self, task_id: str) -> None:
         task = self.database.get(task_id)
         assert task is not None
@@ -205,6 +221,113 @@ class TaskService:
             await self._record_timeout(task_id, task["runner_url"])
         except Exception as exc:
             self.database.update(task_id, status="failed", error=f"{type(exc).__name__}: {exc}", completed_at=utcnow())
+
+    async def _run_ops_image_rebuild(self, task_id: str, job: OpsImageRebuildJob) -> None:
+        check = job.check
+        prompt = self.build_ops_rebuild_prompt(check, job.installed_version, job.target_version)
+        log_parts: list[str] = []
+        self.database.update(task_id, status="running", prompt=prompt, started_at=utcnow())
+        try:
+            if self.dockhand is None:
+                raise RuntimeError("Dockhand deploy capability is not configured")
+            repo_sha = check.source_sha[:7]
+            tag = codex_runner_tag(job.target_version, repo_sha)
+            registry_host = _registry_host(check.registry)
+            image = f"{registry_host}/{check.repository}:{tag}"
+            log_parts.append(
+                "\n".join(
+                    [
+                        "Ops Images codex-runner rebuild started.",
+                        f"Trace issue: {check.repo}#{check.issue_number}",
+                        f"Runner: {check.runner}",
+                        f"Installed Codex version: {job.installed_version}",
+                        f"Target Codex version: {job.target_version}",
+                        f"Image: {image}",
+                    ]
+                )
+            )
+            if not await self.dockhand.container_uses_volume(check.start_container, check.auth_volume):
+                raise RuntimeError(
+                    f"Container '{check.start_container}' is not configured with required volume '{check.auth_volume}'"
+                )
+            log_parts.append(f"Verified required auth volume before deploy: {check.auth_volume}")
+            build_command = [
+                "buildctl",
+                "--addr",
+                check.buildkit_addr,
+                "build",
+                "--frontend",
+                "dockerfile.v0",
+                "--local",
+                "context=/app/codex_runner",
+                "--local",
+                "dockerfile=/app/codex_runner",
+                "--opt",
+                f"build-arg:CODEX_VERSION={job.target_version}",
+                "--output",
+                f"type=image,name={image},push=true",
+            ]
+            log_parts.append(await self._run_command(build_command))
+            prune_command = [
+                "python",
+                "/app/scripts/prune_zot_image_tags.py",
+                "--registry",
+                _registry_url(check.registry),
+                "--repository",
+                check.repository,
+                "--keep",
+                str(check.keep_tags),
+            ]
+            if check.insecure_tls:
+                prune_command.append("--insecure-tls")
+            log_parts.append(await self._run_command(prune_command))
+            deploy_result = await self.dockhand.deploy_container_swap(check.stop_container, check.start_container)
+            log_parts.append(
+                "Deploy verified: "
+                f"stopped={deploy_result.stopped_container}, started={deploy_result.started_container}, "
+                f"status={deploy_result.status}, health={deploy_result.health_status}"
+            )
+            if not await self.dockhand.container_uses_volume(check.start_container, check.auth_volume):
+                raise RuntimeError(
+                    f"Required volume '{check.auth_volume}' is missing after deploy on '{check.start_container}'"
+                )
+            log_parts.append(f"Verified required auth volume after deploy: {check.auth_volume}")
+            log = "\n\n".join(log_parts)
+            capped_log, truncated = self._cap(log)
+            self.database.update(
+                task_id,
+                status="completed",
+                result=f"Built, pushed, pruned, and deployed {image}",
+                log=capped_log,
+                output_truncated=int(truncated),
+                completed_at=utcnow(),
+            )
+        except Exception as exc:
+            log = "\n\n".join(log_parts)
+            capped_log, truncated = self._cap(log)
+            self.database.update(
+                task_id,
+                status="failed",
+                log=capped_log,
+                output_truncated=int(truncated),
+                error=f"{type(exc).__name__}: {exc}",
+                completed_at=utcnow(),
+            )
+        finally:
+            self._internal_ops_jobs.pop(task_id, None)
+
+    async def _run_command(self, command: list[str]) -> str:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await process.communicate()
+        output = stdout.decode("utf-8", errors="replace")
+        command_text = " ".join(command)
+        if process.returncode != 0:
+            raise RuntimeError(f"Command failed ({process.returncode}): {command_text}\n{output}")
+        return f"$ {command_text}\n{output}".strip()
 
     async def _resume_monitor(self, task_id: str, url: str, execution_id: str) -> None:
         try:
@@ -288,6 +411,20 @@ Work on GitHub issue #{issue_number} in {repo}.
 Follow the repository instructions and issue acceptance criteria. Keep work within this issue's scope. Run the required tests and provide the required structured final report.
 """
 
+    @staticmethod
+    def build_ops_rebuild_prompt(check: OpsImageCheck, installed: str, target: str) -> str:
+        return f"""# Internal Ops Images rebuild
+
+Trace issue: {check.repo}#{check.issue_number}
+Runner queue: {check.runner}
+Installed Codex version: {installed}
+Target Codex version: {target}
+
+This is an internal maintenance job created by Task Runner after version drift
+was detected. It is tied to the configured trace issue so every rebuild cycle
+has a durable written reference in the normal task log/result model.
+"""
+
     def get_task_result(self, task_id: str) -> dict[str, Any]:
         task = self._required(task_id)
         return {key: task[key] for key in ("id", "status", "result", "error", "output_truncated", "created_at", "completed_at")}
@@ -318,16 +455,23 @@ Follow the repository instructions and issue acceptance criteria. Keep work with
         drift_detected = drift_value if isinstance(drift_value, bool) else installed != latest
         if not drift_detected:
             return False
-        await self.github.dispatch_workflow(
-            ops_check.workflow_repo,
-            ops_check.workflow_id,
-            ops_check.ref,
-            {
-                "installed_codex_version": installed,
-                "target_codex_version": latest,
-                "runner": ops_check.runner,
-            },
+        task_id = str(uuid.uuid4())
+        self.database.create_task(
+            task_id,
+            ops_check.repo,
+            ops_check.issue_number,
+            ops_check.runner,
+            self.settings.runners[ops_check.runner],
         )
+        self._internal_ops_jobs[task_id] = OpsImageRebuildJob(ops_check, installed, latest)
+        async with self._queue_lock:
+            queue = self._runner_queues.setdefault(ops_check.runner, RunnerQueue())
+            queue.pending.append(task_id)
+            if not queue.halted and not self._queue_worker_running(ops_check.runner):
+                job = asyncio.create_task(self._process_runner_queue(ops_check.runner))
+                setattr(job, "_task_runner_runner_name", ops_check.runner)
+                self._jobs.add(job)
+                job.add_done_callback(self._jobs.discard)
         return True
 
     def _required(self, task_id: str) -> dict[str, Any]:
@@ -335,3 +479,13 @@ Follow the repository instructions and issue acceptance criteria. Keep work with
         if task is None:
             raise ValueError(f"Unknown task_id: {task_id}")
         return task
+
+
+def _registry_host(registry: str) -> str:
+    return registry.removeprefix("https://").removeprefix("http://").rstrip("/")
+
+
+def _registry_url(registry: str) -> str:
+    if registry.startswith("http://") or registry.startswith("https://"):
+        return registry.rstrip("/")
+    return f"https://{registry.rstrip('/')}"

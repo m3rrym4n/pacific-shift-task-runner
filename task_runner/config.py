@@ -56,32 +56,79 @@ class ScheduledTask:
 class OpsImageCheck:
     name: str
     runner: str
-    workflow_repo: str
-    workflow_id: str
-    ref: str
+    repo: str
+    issue_number: int
+    registry: str
+    repository: str
+    stop_container: str
+    start_container: str
+    auth_volume: str
+    buildkit_addr: str
+    source_sha: str
+    keep_tags: int
+    insecure_tls: bool
     interval_seconds: float
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "OpsImageCheck":
         name = value.get("name")
         runner = value.get("runner")
-        workflow_repo = value.get("workflow_repo")
-        workflow_id = value.get("workflow_id")
-        ref = value.get("ref", "main")
+        repo = value.get("repo")
+        issue_number = value.get("issue_number")
+        registry = value.get("registry")
+        repository = value.get("repository", "codex-runner")
+        stop_container = value.get("stop_container", "codex-runner")
+        start_container = value.get("start_container", "codex-runner")
+        auth_volume = value.get("auth_volume", "pacific-shift-codex-runner-auth")
+        buildkit_addr = value.get("buildkit_addr", "unix:///run/buildkit/buildkitd.sock")
+        source_sha = value.get("source_sha") or os.getenv("TASK_RUNNER_SOURCE_SHA", "unknown")
+        keep_tags = value.get("keep_tags", 2)
+        insecure_tls = value.get("insecure_tls", False)
         interval = value.get("interval", value.get("interval_seconds"))
         if not isinstance(name, str) or not name:
             raise ValueError("ops image check name must be a non-empty string")
         if not isinstance(runner, str) or not runner:
             raise ValueError("ops image check runner must be a non-empty string")
-        if not isinstance(workflow_repo, str) or "/" not in workflow_repo:
-            raise ValueError("ops image check workflow_repo must be owner/name")
-        if not isinstance(workflow_id, str) or not workflow_id:
-            raise ValueError("ops image check workflow_id must be a non-empty string")
-        if not isinstance(ref, str) or not ref:
-            raise ValueError("ops image check ref must be a non-empty string")
+        if not isinstance(repo, str) or "/" not in repo:
+            raise ValueError("ops image check repo must be owner/name")
+        if not isinstance(issue_number, int) or issue_number < 1:
+            raise ValueError("ops image check issue_number must be a positive integer")
+        if not isinstance(registry, str) or not registry:
+            raise ValueError("ops image check registry must be a non-empty string")
+        if not isinstance(repository, str) or not repository:
+            raise ValueError("ops image check repository must be a non-empty string")
+        if not isinstance(stop_container, str) or not stop_container:
+            raise ValueError("ops image check stop_container must be a non-empty string")
+        if not isinstance(start_container, str) or not start_container:
+            raise ValueError("ops image check start_container must be a non-empty string")
+        if not isinstance(auth_volume, str) or not auth_volume:
+            raise ValueError("ops image check auth_volume must be a non-empty string")
+        if not isinstance(buildkit_addr, str) or not buildkit_addr:
+            raise ValueError("ops image check buildkit_addr must be a non-empty string")
+        if not isinstance(source_sha, str) or not source_sha:
+            raise ValueError("ops image check source_sha must be a non-empty string")
+        if not isinstance(keep_tags, int) or keep_tags < 1:
+            raise ValueError("ops image check keep_tags must be a positive integer")
+        if not isinstance(insecure_tls, bool):
+            raise ValueError("ops image check insecure_tls must be a boolean")
         if interval is None:
             raise ValueError("ops image check interval is required")
-        return cls(name, runner, workflow_repo, workflow_id, ref, parse_interval_seconds(interval))
+        return cls(
+            name,
+            runner,
+            repo,
+            issue_number,
+            registry,
+            repository,
+            stop_container,
+            start_container,
+            auth_volume,
+            buildkit_addr,
+            source_sha,
+            keep_tags,
+            insecure_tls,
+            parse_interval_seconds(interval),
+        )
 
 
 @dataclass(frozen=True)

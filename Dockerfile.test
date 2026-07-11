@@ -4,7 +4,6 @@ ENV PYTHONPATH=/app
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY task_runner ./task_runner
-COPY .github ./.github
 COPY scripts ./scripts
 COPY tests ./tests
 CMD ["pytest", "-q"]

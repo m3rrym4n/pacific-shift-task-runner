@@ -18,6 +18,30 @@ class FakeGitHub:
         self.workflow_dispatches.append((repo, workflow_id, ref, inputs or {}))
 
 
+class FakeDockhand:
+    def __init__(self, volume_present=True):
+        self.volume_present = volume_present
+        self.volume_checks = []
+        self.deploys = []
+
+    async def container_uses_volume(self, container, volume_name):
+        self.volume_checks.append((container, volume_name))
+        return self.volume_present
+
+    async def deploy_container_swap(self, stop_container, start_container):
+        self.deploys.append((stop_container, start_container))
+        return type(
+            "ContainerDeployResult",
+            (),
+            {
+                "stopped_container": stop_container,
+                "started_container": start_container,
+                "status": "running",
+                "health_status": "healthy",
+            },
+        )()
+
+
 class FakeRunner:
     def __init__(self, statuses=None, result=None, codex_version=None):
         self.statuses = iter(statuses or [{"status": "completed"}])
@@ -97,14 +121,14 @@ class PerRunnerStatusRunner:
         return {"installed": "0.144.1", "latest": "0.144.1", "drift_detected": False}
 
 
-def make_service(tmp_path, runner, **overrides):
+def make_service(tmp_path, runner, dockhand=None, **overrides):
     values = dict(database_path=str(tmp_path / "tasks.db"), runners={"codex": "http://runner"}, poll_interval_seconds=0)
     values.update(overrides)
     settings = Settings(**values)
     database = Database(settings.database_path)
     database.initialize()
     github = FakeGitHub()
-    service = TaskService(settings, database, github, runner)
+    service = TaskService(settings, database, github, runner, dockhand)
     service.fake_github = github
     return service
 
@@ -140,13 +164,28 @@ def test_settings_reads_dockhand_configuration(monkeypatch):
 def test_settings_reads_ops_image_checks(monkeypatch):
     monkeypatch.setenv(
         "TASK_RUNNER_OPS_IMAGE_CHECKS",
-        """[{"name":"codex","runner":"codex","workflow_repo":"owner/repo","workflow_id":"ops.yml","interval":"1d"}]""",
+        """[{"name":"codex","runner":"codex","repo":"owner/repo","issue_number":35,"registry":"zot.lan:5000","interval":"1d"}]""",
     )
 
     settings = Settings.from_env()
 
     assert settings.ops_image_checks == [
-        OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+        OpsImageCheck(
+            "codex",
+            "codex",
+            "owner/repo",
+            35,
+            "zot.lan:5000",
+            "codex-runner",
+            "codex-runner",
+            "codex-runner",
+            "pacific-shift-codex-runner-auth",
+            "unix:///run/buildkit/buildkitd.sock",
+            "unknown",
+            2,
+            False,
+            86400,
+        )
     ]
 
 
@@ -317,32 +356,118 @@ async def test_halted_runner_queue_does_not_block_other_runner(tmp_path, caplog)
 
 
 @pytest.mark.asyncio
-async def test_ops_image_check_dispatches_workflow_on_codex_version_drift(tmp_path):
+async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_drift(tmp_path):
     runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
-    service = make_service(tmp_path, runner)
-    check = OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+    dockhand = FakeDockhand()
+    service = make_service(tmp_path, runner, dockhand=dockhand)
+    commands = []
+
+    async def fake_run_command(command):
+        commands.append(command)
+        return "ok"
+
+    service._run_command = fake_run_command
+    check = OpsImageCheck(
+        "codex",
+        "codex",
+        "owner/repo",
+        35,
+        "zot.lan:5000",
+        "codex-runner",
+        "codex-runner",
+        "codex-runner",
+        "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock",
+        "abc1234",
+        2,
+        False,
+        86400,
+    )
 
     dispatched = await service.check_ops_image(check)
+    await asyncio.gather(*service._jobs)
 
     assert dispatched is True
-    assert service.fake_github.workflow_dispatches == [
-        (
-            "owner/repo",
-            "ops.yml",
-            "main",
-            {
-                "installed_codex_version": "0.142.5",
-                "target_codex_version": "0.144.1",
-                "runner": "codex",
-            },
-        )
+    assert service.fake_github.workflow_dispatches == []
+    tasks = service.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0]["repo"] == "owner/repo"
+    assert tasks[0]["issue_number"] == 35
+    assert tasks[0]["status"] == "completed"
+    assert commands[0][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
+    assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[0]
+    assert commands[1][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
+    assert dockhand.deploys == [("codex-runner", "codex-runner")]
+    assert dockhand.volume_checks == [
+        ("codex-runner", "pacific-shift-codex-runner-auth"),
+        ("codex-runner", "pacific-shift-codex-runner-auth"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_regular_dispatch_queues_behind_active_ops_rebuild(tmp_path):
+    runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
+    service = make_service(tmp_path, runner, dockhand=FakeDockhand(), poll_interval_seconds=0.001)
+    rebuild_started = asyncio.Event()
+    finish_rebuild = asyncio.Event()
+
+    async def fake_run_command(command):
+        rebuild_started.set()
+        await finish_rebuild.wait()
+        return "ok"
+
+    service._run_command = fake_run_command
+    check = OpsImageCheck(
+        "codex",
+        "codex",
+        "owner/repo",
+        35,
+        "zot.lan:5000",
+        "codex-runner",
+        "codex-runner",
+        "codex-runner",
+        "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock",
+        "abc1234",
+        2,
+        False,
+        86400,
+    )
+
+    assert await service.check_ops_image(check) is True
+    await asyncio.wait_for(rebuild_started.wait(), timeout=1)
+    queued = await service.run_task("owner/repo", 36, "codex")
+
+    assert queued["status"] == "queued"
+    assert queued["position"] == 1
+    assert runner.prompt is None
+
+    finish_rebuild.set()
+    await asyncio.gather(*service._jobs)
+
+    assert service.list_tasks()[0]["issue_number"] == 36
+    assert service.list_tasks()[0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
 async def test_ops_image_check_skips_workflow_when_versions_match(tmp_path):
     service = make_service(tmp_path, FakeRunner())
-    check = OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+    check = OpsImageCheck(
+        "codex",
+        "codex",
+        "owner/repo",
+        35,
+        "zot.lan:5000",
+        "codex-runner",
+        "codex-runner",
+        "codex-runner",
+        "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock",
+        "abc1234",
+        2,
+        False,
+        86400,
+    )
 
     dispatched = await service.check_ops_image(check)
 
@@ -354,7 +479,22 @@ async def test_ops_image_check_skips_workflow_when_versions_match(tmp_path):
 async def test_ops_image_check_falls_back_to_version_comparison_for_non_boolean_drift_flag(tmp_path):
     runner = FakeRunner(codex_version={"installed": "0.144.1", "latest": "0.144.1", "drift_detected": "false"})
     service = make_service(tmp_path, runner)
-    check = OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+    check = OpsImageCheck(
+        "codex",
+        "codex",
+        "owner/repo",
+        35,
+        "zot.lan:5000",
+        "codex-runner",
+        "codex-runner",
+        "codex-runner",
+        "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock",
+        "abc1234",
+        2,
+        False,
+        86400,
+    )
 
     dispatched = await service.check_ops_image(check)
 
