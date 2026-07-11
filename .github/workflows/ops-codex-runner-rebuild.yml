@@ -1,0 +1,85 @@
+name: Ops Images - Codex Runner Rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      installed_codex_version:
+        description: Codex version currently reported by codex-runner
+        required: true
+        type: string
+      target_codex_version:
+        description: Codex version to install into the rebuilt runner image
+        required: true
+        type: string
+      runner:
+        description: Runner registry name that requested the rebuild
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-push-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image metadata
+        id: meta
+        run: |
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          tag="${{ inputs.target_codex_version }}-${short_sha}"
+          image="${OPS_IMAGES_REGISTRY}/${OPS_IMAGES_CODEX_RUNNER_REPOSITORY}:${tag}"
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+        env:
+          OPS_IMAGES_REGISTRY: ${{ vars.OPS_IMAGES_REGISTRY }}
+          OPS_IMAGES_CODEX_RUNNER_REPOSITORY: ${{ vars.OPS_IMAGES_CODEX_RUNNER_REPOSITORY || 'codex-runner' }}
+
+      - name: Log in to Zot
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.OPS_IMAGES_REGISTRY }}
+          username: ${{ secrets.ZOT_USERNAME }}
+          password: ${{ secrets.ZOT_PASSWORD }}
+
+      - name: Build codex-runner image
+        run: |
+          docker build \
+            --build-arg "CODEX_VERSION=${{ inputs.target_codex_version }}" \
+            -t "${{ steps.meta.outputs.image }}" \
+            codex_runner
+
+      - name: Push codex-runner image
+        run: docker push "${{ steps.meta.outputs.image }}"
+
+      - name: Prune Zot tags to current plus N-1
+        run: |
+          python scripts/prune_zot_image_tags.py \
+            --registry "https://${OPS_IMAGES_REGISTRY}" \
+            --repository "${OPS_IMAGES_CODEX_RUNNER_REPOSITORY}" \
+            --keep 2 \
+            --token-env ZOT_TOKEN \
+            ${OPS_IMAGES_ZOT_INSECURE_TLS:+--insecure-tls}
+        env:
+          OPS_IMAGES_REGISTRY: ${{ vars.OPS_IMAGES_REGISTRY }}
+          OPS_IMAGES_CODEX_RUNNER_REPOSITORY: ${{ vars.OPS_IMAGES_CODEX_RUNNER_REPOSITORY || 'codex-runner' }}
+          OPS_IMAGES_ZOT_INSECURE_TLS: ${{ vars.OPS_IMAGES_ZOT_INSECURE_TLS }}
+          ZOT_TOKEN: ${{ secrets.ZOT_TOKEN }}
+
+      - name: Report readiness
+        run: |
+          {
+            echo "## Codex runner image ready"
+            echo
+            echo "- Runner: ${{ inputs.runner }}"
+            echo "- Installed version detected: ${{ inputs.installed_codex_version }}"
+            echo "- Target version built: ${{ inputs.target_codex_version }}"
+            echo "- Image: ${{ steps.meta.outputs.image }}"
+            echo "- Tag: ${{ steps.meta.outputs.tag }}"
+            echo
+            echo "This workflow only builds, pushes, prunes Zot retention, and reports readiness."
+            echo "It does not modify the running codex-runner container."
+          } >> "$GITHUB_STEP_SUMMARY"

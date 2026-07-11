@@ -22,3 +22,15 @@ class GitHubClient:
             agents = base64.b64decode(agents_response.json()["content"]).decode("utf-8")
         return agents, issue["title"], issue.get("body") or ""
 
+    async def dispatch_workflow(
+        self,
+        repo: str,
+        workflow_id: str,
+        ref: str,
+        inputs: dict[str, str] | None = None,
+    ) -> None:
+        response = await self.client.post(
+            f"/repos/{repo}/actions/workflows/{workflow_id}/dispatches",
+            json={"ref": ref, "inputs": inputs or {}},
+        )
+        response.raise_for_status()

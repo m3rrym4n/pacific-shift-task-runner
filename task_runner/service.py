@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import ScheduledTask, Settings
+from .config import OpsImageCheck, ScheduledTask, Settings
 from .database import Database
 from .dockhand import ContainerDeployResult, DockhandClient
 from .github import GitHubClient
@@ -48,6 +48,16 @@ class TaskService:
                 scheduled_task.runner,
                 scheduled_task.interval_seconds,
             )
+        for ops_check in self.settings.ops_image_checks:
+            job = asyncio.create_task(self._ops_image_loop(ops_check))
+            self._scheduler_jobs.add(job)
+            job.add_done_callback(self._scheduler_jobs.discard)
+            self.logger.info(
+                "Ops image check '%s' enabled for runner '%s' every %gs",
+                ops_check.name,
+                ops_check.runner,
+                ops_check.interval_seconds,
+            )
 
     async def stop_scheduler(self) -> None:
         if not self._scheduler_jobs:
@@ -67,6 +77,18 @@ class TaskService:
                 self.logger.info("Scheduled task '%s' fired and created task %s", scheduled_task.name, task_id)
             except Exception:
                 self.logger.exception("Scheduled task '%s' failed to fire", scheduled_task.name)
+
+    async def _ops_image_loop(self, ops_check: OpsImageCheck) -> None:
+        while True:
+            await asyncio.sleep(ops_check.interval_seconds)
+            try:
+                dispatched = await self.check_ops_image(ops_check)
+                if dispatched:
+                    self.logger.info("Ops image check '%s' detected drift and dispatched rebuild", ops_check.name)
+                else:
+                    self.logger.info("Ops image check '%s' completed with no drift", ops_check.name)
+            except Exception:
+                self.logger.exception("Ops image check '%s' failed", ops_check.name)
 
     async def run_task(self, repo: str, issue_number: int, runner_name: str) -> str:
         if runner_name not in self.settings.runners:
@@ -163,6 +185,31 @@ Follow the repository instructions and issue acceptance criteria. Keep work with
         if self.dockhand is None:
             raise RuntimeError("Dockhand deploy capability is not configured")
         return await self.dockhand.deploy_container_swap(stop_container, start_container)
+
+    async def check_ops_image(self, ops_check: OpsImageCheck) -> bool:
+        if ops_check.runner not in self.settings.runners:
+            available = ", ".join(sorted(self.settings.runners)) or "none"
+            raise ValueError(f"Unknown runner '{ops_check.runner}'. Available runners: {available}")
+        version_data = await self.runner.codex_version(self.settings.runners[ops_check.runner])
+        installed = str(version_data.get("installed") or "")
+        latest = str(version_data.get("latest") or "")
+        if not installed or not latest:
+            raise ValueError("Codex version drift response must include installed and latest")
+        drift_value = version_data.get("drift_detected")
+        drift_detected = drift_value if isinstance(drift_value, bool) else installed != latest
+        if not drift_detected:
+            return False
+        await self.github.dispatch_workflow(
+            ops_check.workflow_repo,
+            ops_check.workflow_id,
+            ops_check.ref,
+            {
+                "installed_codex_version": installed,
+                "target_codex_version": latest,
+                "runner": ops_check.runner,
+            },
+        )
+        return True
 
     def _required(self, task_id: str) -> dict[str, Any]:
         task = self.database.get(task_id)

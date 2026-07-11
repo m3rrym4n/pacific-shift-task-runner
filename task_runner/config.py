@@ -53,10 +53,43 @@ class ScheduledTask:
 
 
 @dataclass(frozen=True)
+class OpsImageCheck:
+    name: str
+    runner: str
+    workflow_repo: str
+    workflow_id: str
+    ref: str
+    interval_seconds: float
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "OpsImageCheck":
+        name = value.get("name")
+        runner = value.get("runner")
+        workflow_repo = value.get("workflow_repo")
+        workflow_id = value.get("workflow_id")
+        ref = value.get("ref", "main")
+        interval = value.get("interval", value.get("interval_seconds"))
+        if not isinstance(name, str) or not name:
+            raise ValueError("ops image check name must be a non-empty string")
+        if not isinstance(runner, str) or not runner:
+            raise ValueError("ops image check runner must be a non-empty string")
+        if not isinstance(workflow_repo, str) or "/" not in workflow_repo:
+            raise ValueError("ops image check workflow_repo must be owner/name")
+        if not isinstance(workflow_id, str) or not workflow_id:
+            raise ValueError("ops image check workflow_id must be a non-empty string")
+        if not isinstance(ref, str) or not ref:
+            raise ValueError("ops image check ref must be a non-empty string")
+        if interval is None:
+            raise ValueError("ops image check interval is required")
+        return cls(name, runner, workflow_repo, workflow_id, ref, parse_interval_seconds(interval))
+
+
+@dataclass(frozen=True)
 class Settings:
     database_path: str = "/data/tasks.db"
     runners: dict[str, str] = None  # type: ignore[assignment]
     scheduled_tasks: list[ScheduledTask] = None  # type: ignore[assignment]
+    ops_image_checks: list[OpsImageCheck] = None  # type: ignore[assignment]
     timeout_seconds: float = 600
     output_cap_bytes: int = 1_000_000
     poll_interval_seconds: float = 2
@@ -70,6 +103,7 @@ class Settings:
     def __post_init__(self) -> None:
         object.__setattr__(self, "runners", self.runners or {})
         object.__setattr__(self, "scheduled_tasks", self.scheduled_tasks or [])
+        object.__setattr__(self, "ops_image_checks", self.ops_image_checks or [])
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -85,12 +119,19 @@ class Settings:
             isinstance(value, dict) for value in scheduled_task_values
         ):
             raise ValueError("TASK_RUNNER_SCHEDULED_TASKS must be a JSON array of scheduled task objects")
+        raw_ops_image_checks = os.getenv("TASK_RUNNER_OPS_IMAGE_CHECKS", "[]")
+        ops_image_check_values = json.loads(raw_ops_image_checks)
+        if not isinstance(ops_image_check_values, list) or not all(
+            isinstance(value, dict) for value in ops_image_check_values
+        ):
+            raise ValueError("TASK_RUNNER_OPS_IMAGE_CHECKS must be a JSON array of ops image check objects")
         raw_dockhand_env = os.getenv("TASK_RUNNER_DOCKHAND_ENV")
         dockhand_env = int(raw_dockhand_env) if raw_dockhand_env else None
         return cls(
             database_path=os.getenv("TASK_RUNNER_DATABASE", "/data/tasks.db"),
             runners=runners,
             scheduled_tasks=[ScheduledTask.from_dict(value) for value in scheduled_task_values],
+            ops_image_checks=[OpsImageCheck.from_dict(value) for value in ops_image_check_values],
             timeout_seconds=float(os.getenv("TASK_RUNNER_TIMEOUT_SECONDS", "600")),
             output_cap_bytes=int(os.getenv("TASK_RUNNER_OUTPUT_CAP_BYTES", "1000000")),
             poll_interval_seconds=float(os.getenv("TASK_RUNNER_POLL_INTERVAL_SECONDS", "2")),
