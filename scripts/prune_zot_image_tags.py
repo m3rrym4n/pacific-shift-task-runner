@@ -32,6 +32,10 @@ def api_url(registry: str, repository: str, path: str) -> str:
     return f"{registry.rstrip('/')}/v2/{repository.strip('/')}/{path.lstrip('/')}"
 
 
+def optional_token_from_env(name: str) -> str | None:
+    return os.getenv(name) or None
+
+
 def tag_created_at(
     registry: str,
     repository: str,
@@ -77,12 +81,16 @@ def main() -> int:
     parser.add_argument("--registry", required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--keep", type=int, default=2)
-    parser.add_argument("--token-env", default="ZOT_TOKEN")
+    parser.add_argument(
+        "--token-env",
+        default="ZOT_TOKEN",
+        help="Optional bearer token environment variable. If unset, requests are unauthenticated.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--insecure-tls", action="store_true")
     args = parser.parse_args()
 
-    token = os.getenv(args.token_env)
+    token = optional_token_from_env(args.token_env)
     verify_tls = not args.insecure_tls
     status, body, _ = request(api_url(args.registry, args.repository, "tags/list"), token=token, verify_tls=verify_tls)
     if status >= 400:

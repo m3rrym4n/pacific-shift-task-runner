@@ -90,15 +90,12 @@ workflow builds `codex_runner` with `CODEX_VERSION=<target>`, tags the image as
 to current plus N-1, and reports the ready image tag. It deliberately does not
 stop or start the running `codex-runner` container.
 
-The workflow expects these GitHub repository variables/secrets:
+The workflow expects these GitHub repository variables:
 
 | Name | Type | Purpose |
 |---|---|---|
-| `OPS_IMAGES_REGISTRY` | variable | Zot registry host, without scheme, for Docker push/login |
+| `OPS_IMAGES_REGISTRY` | variable | Zot registry host, without scheme, for Docker push |
 | `OPS_IMAGES_CODEX_RUNNER_REPOSITORY` | variable | Zot repository name; defaults to `codex-runner` in the workflow |
-| `ZOT_USERNAME` | secret | Zot username for Docker login |
-| `ZOT_PASSWORD` | secret | Zot password for Docker login |
-| `ZOT_TOKEN` | secret | Bearer token used by the retention helper against Zot's registry API |
 
 ## Runner contract
 
