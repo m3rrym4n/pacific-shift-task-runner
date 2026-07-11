@@ -78,6 +78,36 @@ async def test_deploy_container_swap_accepts_running_container_without_healthche
 
 
 @pytest.mark.asyncio
+async def test_container_uses_volume_detects_named_volume_mount():
+    http = FakeHttpClient(
+        [
+            {
+                "status": "running",
+                "running": True,
+                "Mounts": [
+                    {
+                        "Type": "volume",
+                        "Name": "pacific-shift-codex-runner-auth",
+                        "Source": "/var/lib/docker/volumes/pacific-shift-codex-runner-auth/_data",
+                    }
+                ],
+            }
+        ]
+    )
+    client = DockhandClient("http://dockhand:3003", "dh_test", client=http)
+
+    assert await client.container_uses_volume("codex-runner", "pacific-shift-codex-runner-auth") is True
+
+
+@pytest.mark.asyncio
+async def test_container_uses_volume_returns_false_when_missing():
+    http = FakeHttpClient([{"status": "running", "running": True, "Mounts": []}])
+    client = DockhandClient("http://dockhand:3003", "dh_test", client=http)
+
+    assert await client.container_uses_volume("codex-runner", "pacific-shift-codex-runner-auth") is False
+
+
+@pytest.mark.asyncio
 async def test_deploy_container_swap_requires_dedicated_dockhand_token():
     client = DockhandClient("http://dockhand:3003", "not-a-dockhand-token", client=FakeHttpClient([]))
 

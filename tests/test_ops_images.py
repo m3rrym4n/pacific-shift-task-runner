@@ -29,25 +29,6 @@ def test_prune_candidates_keep_current_plus_n_minus_one():
     assert prune_candidates(tags, keep=2) == ["0.142.5-old0001"]
 
 
-def test_ops_workflow_does_not_touch_running_codex_runner_container():
-    workflow = Path(".github/workflows/ops-codex-runner-rebuild.yml").read_text()
-
-    assert "docker stop" not in workflow
-    assert "docker rm" not in workflow
-    assert "docker run" not in workflow
-    assert "stop, start" not in workflow
-
-
-def test_ops_workflow_uses_unauthenticated_zot_registry():
-    workflow = Path(".github/workflows/ops-codex-runner-rebuild.yml").read_text()
-
-    assert "docker/login-action" not in workflow
-    assert "ZOT_USERNAME" not in workflow
-    assert "ZOT_PASSWORD" not in workflow
-    assert "ZOT_TOKEN" not in workflow
-    assert "--token-env" not in workflow
-
-
 def test_prune_script_missing_token_env_uses_no_authorization_header(monkeypatch):
     prune = load_prune_script()
     captured = {}

@@ -103,6 +103,12 @@ class DockhandClient:
             health_status=state.health_status,
         )
 
+    async def container_uses_volume(self, container: str, volume_name: str) -> bool:
+        if not volume_name:
+            raise ValueError("volume_name is required")
+        state = await self.get_container(container)
+        return _container_uses_volume(state.raw, volume_name)
+
     async def wait_until_started(self, container: str) -> ContainerState:
         deadline = asyncio.get_running_loop().time() + self.verify_timeout_seconds
         last_state: ContainerState | None = None
@@ -156,6 +162,21 @@ def _container_state(identifier: str, data: dict[str, Any]) -> ContainerState:
         running_value = state.get("running")
     running = bool(running_value) if running_value is not None else status == "running"
     return ContainerState(identifier=identifier, status=status, running=running, health_status=health_status, raw=data)
+
+
+def _container_uses_volume(data: dict[str, Any], volume_name: str) -> bool:
+    mounts = data.get("mounts") or data.get("Mounts") or []
+    if not isinstance(mounts, list):
+        return False
+    for mount in mounts:
+        if not isinstance(mount, dict):
+            continue
+        name = mount.get("name") or mount.get("Name")
+        mount_type = _lower(mount.get("type") or mount.get("Type"))
+        source = str(mount.get("source") or mount.get("Source") or "")
+        if name == volume_name or (mount_type == "volume" and source.endswith(f"/{volume_name}")):
+            return True
+    return False
 
 
 def _case_insensitive_dict(value: Any) -> dict[str, Any]:

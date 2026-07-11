@@ -8,7 +8,7 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 |---|---:|---|
 | `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://192.168.1.68:7000"}` |
 | `TASK_RUNNER_SCHEDULED_TASKS` | `[]` | JSON array of scheduled issue dispatches |
-| `TASK_RUNNER_OPS_IMAGE_CHECKS` | `[]` | JSON array of scheduled operational image version-drift checks |
+| `TASK_RUNNER_OPS_IMAGE_CHECKS` | `[]` | JSON array of scheduled operational image version-drift checks and rebuild jobs |
 | `TASK_RUNNER_DATABASE` | `/data/tasks.db` | SQLite database path |
 | `TASK_RUNNER_TIMEOUT_SECONDS` | `600` | Hard orchestration timeout |
 | `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
@@ -19,6 +19,7 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 | `TASK_RUNNER_DOCKHAND_ENV` | unset | Optional Dockhand environment ID for container deploy operations |
 | `TASK_RUNNER_DOCKHAND_VERIFY_TIMEOUT_SECONDS` | `60` | Maximum time to wait for a started container to verify as running or healthy |
 | `TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS` | `2` | Poll interval while verifying a started container |
+| `TASK_RUNNER_SOURCE_SHA` | `unknown` | Source revision baked into the Task Runner image and used in Ops Images tags |
 
 The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
 
@@ -63,9 +64,13 @@ restart the container. To remove a scheduled job, remove its object from the
 array and restart the container. The `runner` value must match a key in
 `TASK_RUNNER_RUNNERS`.
 
-Ops Image checks use the same scheduler but do not create normal issue-dispatch
-tasks. They call the configured runner's version endpoint and, when drift is
-detected, trigger a dedicated GitHub Actions `workflow_dispatch`.
+Ops Image checks use the same scheduler and the same per-runner queue as normal
+issue dispatches. They call the configured runner's version endpoint and, when
+drift is detected, create a normal task row tied to a fixed trace issue. The
+queued internal job builds, pushes, prunes, deploys, and verifies the rebuilt
+Codex runner image. The fixed trace issue preserves the "written issue behind
+every action" rule without creating a new GitHub issue for every maintenance
+cycle.
 
 Configure Ops Image checks with `TASK_RUNNER_OPS_IMAGE_CHECKS`:
 
@@ -74,28 +79,47 @@ Configure Ops Image checks with `TASK_RUNNER_OPS_IMAGE_CHECKS`:
   {
     "name": "daily-codex-runner-rebuild-check",
     "runner": "codex",
-    "workflow_repo": "m3rrym4n/pacific-shift-task-runner",
-    "workflow_id": "ops-codex-runner-rebuild.yml",
-    "ref": "main",
+    "repo": "m3rrym4n/pacific-shift-task-runner",
+    "issue_number": 35,
+    "registry": "zot.lan:5000",
+    "repository": "codex-runner",
+    "stop_container": "codex-runner",
+    "start_container": "codex-runner",
+    "auth_volume": "pacific-shift-codex-runner-auth",
+    "buildkit_addr": "unix:///run/buildkit/buildkitd.sock",
+    "source_sha": "abc1234",
+    "keep_tags": 2,
+    "insecure_tls": false,
     "interval": "1d"
   }
 ]
 ```
 
 The Codex runner exposes `GET /codex/version`, returning installed version,
-latest npm version, and a `drift_detected` boolean. A drift result triggers the
-Ops Images workflow with the installed and target versions as inputs. The
-workflow builds `codex_runner` with `CODEX_VERSION=<target>`, tags the image as
-`<codex-version>-<repo-short-sha>`, pushes it to Zot, prunes the Zot repository
-to current plus N-1, and reports the ready image tag. It deliberately does not
-stop or start the running `codex-runner` container.
+latest npm version, and a `drift_detected` boolean. A drift result enqueues an
+internal rebuild job behind any active `codex` work. The job invokes `buildctl`
+through the mounted BuildKit socket, builds `codex_runner` with
+`CODEX_VERSION=<target>`, tags the image as
+`<registry>/<repository>:<codex-version>-<repo-short-sha>`, pushes it to Zot,
+runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, calls
+Dockhand's `deploy_container_swap`, and verifies that
+`pacific-shift-codex-runner-auth` is still mounted after the swap.
 
-The workflow expects these GitHub repository variables:
+The Task Runner container must mount the host BuildKit socket directory at the
+same in-container path used by the CrateSpy runner:
 
-| Name | Type | Purpose |
-|---|---|---|
-| `OPS_IMAGES_REGISTRY` | variable | Zot registry host, without scheme, for Docker push |
-| `OPS_IMAGES_CODEX_RUNNER_REPOSITORY` | variable | Zot repository name; defaults to `codex-runner` in the workflow |
+```yaml
+group_add:
+  - "0"
+volumes:
+  - /DATA/AppData/buildkit/socket:/run/buildkit
+```
+
+The BuildKit socket is group-readable by GID `0`; `group_add` lets the
+non-root Task Runner process open the socket without changing the container's
+primary user.
+
+An example compose deployment is provided in `deploy/docker-compose.yml`.
 
 ## Runner contract
 
@@ -114,7 +138,9 @@ Queues are independent per runner and are not persisted across restarts.
 ## Docker
 
 ```bash
-docker build -t pacific-shift-task-runner:latest .
+docker build \
+  --build-arg "TASK_RUNNER_SOURCE_SHA=$(git rev-parse --short=7 HEAD)" \
+  -t pacific-shift-task-runner:latest .
 
 docker stop pacific-shift-task-runner
 docker rm pacific-shift-task-runner
@@ -122,10 +148,13 @@ docker rm pacific-shift-task-runner
 docker run -d \
   --name pacific-shift-task-runner \
   --restart unless-stopped \
+  --group-add 0 \
   -p 6002:6002 \
   -v pacific-shift-task-runner-data:/data \
+  -v /DATA/AppData/buildkit/socket:/run/buildkit \
   -e 'TASK_RUNNER_RUNNERS={"codex":"http://192.168.1.68:7000"}' \
   -e 'TASK_RUNNER_SCHEDULED_TASKS=[]' \
+  -e 'TASK_RUNNER_OPS_IMAGE_CHECKS=[]' \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-task-runner:latest
 ```

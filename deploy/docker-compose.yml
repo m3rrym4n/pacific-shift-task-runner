@@ -1,0 +1,28 @@
+services:
+  pacific-shift-task-runner:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        TASK_RUNNER_SOURCE_SHA: ${TASK_RUNNER_SOURCE_SHA:-unknown}
+    image: pacific-shift-task-runner:latest
+    container_name: pacific-shift-task-runner
+    restart: unless-stopped
+    group_add:
+      - "0"
+    ports:
+      - "6002:6002"
+    volumes:
+      - pacific-shift-task-runner-data:/data
+      - /DATA/AppData/buildkit/socket:/run/buildkit
+    environment:
+      TASK_RUNNER_RUNNERS: ${TASK_RUNNER_RUNNERS:-{}}
+      TASK_RUNNER_SCHEDULED_TASKS: ${TASK_RUNNER_SCHEDULED_TASKS:-[]}
+      TASK_RUNNER_OPS_IMAGE_CHECKS: ${TASK_RUNNER_OPS_IMAGE_CHECKS:-[]}
+      TASK_RUNNER_DOCKHAND_URL: ${TASK_RUNNER_DOCKHAND_URL:-}
+      TASK_RUNNER_DOCKHAND_TOKEN: ${TASK_RUNNER_DOCKHAND_TOKEN:-}
+      TASK_RUNNER_DOCKHAND_ENV: ${TASK_RUNNER_DOCKHAND_ENV:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+volumes:
+  pacific-shift-task-runner-data:
