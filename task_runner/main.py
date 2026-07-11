@@ -30,8 +30,8 @@ mcp = FastMCP("Pacific Shift Task Runner", stateless_http=True, streamable_http_
 
 
 @mcp.tool()
-async def run_task(repo: str, issue_number: int, runner: str) -> str:
-    """Dispatch one GitHub issue to a configured runner and return its task ID."""
+async def run_task(repo: str, issue_number: int, runner: str) -> dict:
+    """Queue one GitHub issue for a configured runner and return queue placement."""
     return await service.run_task(repo, issue_number, runner)
 
 

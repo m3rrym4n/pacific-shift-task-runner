@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import uuid
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +15,13 @@ from .runner import RunnerClient
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass
+class RunnerQueue:
+    pending: deque[str] = field(default_factory=deque)
+    active_task_id: str | None = None
+    halted: bool = False
 
 
 class TaskService:
@@ -31,6 +40,8 @@ class TaskService:
         self.dockhand = dockhand
         self._jobs: set[asyncio.Task] = set()
         self._scheduler_jobs: set[asyncio.Task] = set()
+        self._queue_lock = asyncio.Lock()
+        self._runner_queues = {name: RunnerQueue() for name in settings.runners}
         self.logger = logging.getLogger(__name__)
 
     def start_scheduler(self) -> None:
@@ -85,10 +96,14 @@ class TaskService:
         while True:
             await asyncio.sleep(scheduled_task.interval_seconds)
             try:
-                task_id = await self.run_task(
+                receipt = await self.run_task(
                     scheduled_task.repo, scheduled_task.issue_number, scheduled_task.runner
                 )
-                self.logger.info("Scheduled task '%s' fired and created task %s", scheduled_task.name, task_id)
+                self.logger.info(
+                    "Scheduled task '%s' fired and created task %s",
+                    scheduled_task.name,
+                    receipt["task_id"],
+                )
             except Exception:
                 self.logger.exception("Scheduled task '%s' failed to fire", scheduled_task.name)
 
@@ -104,7 +119,7 @@ class TaskService:
             except Exception:
                 self.logger.exception("Ops image check '%s' failed", ops_check.name)
 
-    async def run_task(self, repo: str, issue_number: int, runner_name: str) -> str:
+    async def run_task(self, repo: str, issue_number: int, runner_name: str) -> dict[str, Any]:
         if runner_name not in self.settings.runners:
             available = ", ".join(sorted(self.settings.runners)) or "none"
             raise ValueError(f"Unknown runner '{runner_name}'. Available runners: {available}")
@@ -112,10 +127,67 @@ class TaskService:
             raise ValueError("repo must be owner/name and issue_number must be positive")
         task_id = str(uuid.uuid4())
         self.database.create_task(task_id, repo, issue_number, runner_name, self.settings.runners[runner_name])
-        job = asyncio.create_task(self._dispatch(task_id))
-        self._jobs.add(job)
-        job.add_done_callback(self._jobs.discard)
-        return task_id
+        async with self._queue_lock:
+            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+            queue.pending.append(task_id)
+            queue_length = len(queue.pending) + (1 if queue.active_task_id else 0)
+            position = queue_length - 1
+            status = "queued"
+            if not queue.halted and not queue.active_task_id and queue.pending[0] == task_id:
+                status = "running"
+            if not queue.halted and not self._queue_worker_running(runner_name):
+                job = asyncio.create_task(self._process_runner_queue(runner_name))
+                setattr(job, "_task_runner_runner_name", runner_name)
+                self._jobs.add(job)
+                job.add_done_callback(self._jobs.discard)
+        return {
+            "task_id": task_id,
+            "status": status,
+            "position": position,
+            "queue_length": queue_length,
+            "runner": runner_name,
+        }
+
+    def _queue_worker_running(self, runner_name: str) -> bool:
+        return any(
+            not job.done() and getattr(job, "_task_runner_runner_name", None) == runner_name
+            for job in self._jobs
+        )
+
+    async def _process_runner_queue(self, runner_name: str) -> None:
+        while True:
+            async with self._queue_lock:
+                queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                if queue.halted or queue.active_task_id or not queue.pending:
+                    return
+                task_id = queue.pending.popleft()
+                queue.active_task_id = task_id
+            try:
+                await self._dispatch(task_id)
+                task = self.database.get(task_id) or {}
+                if task.get("status") != "completed":
+                    self.logger.error(
+                        "Runner queue '%s' halted after task %s ended with status '%s': %s",
+                        runner_name,
+                        task_id,
+                        task.get("status"),
+                        task.get("error") or "no error detail recorded",
+                    )
+                    async with self._queue_lock:
+                        queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                        queue.halted = True
+                    return
+            except Exception:
+                self.logger.exception("Runner queue '%s' halted while processing task %s", runner_name, task_id)
+                async with self._queue_lock:
+                    queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                    queue.halted = True
+                return
+            finally:
+                async with self._queue_lock:
+                    queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                    if queue.active_task_id == task_id:
+                        queue.active_task_id = None
 
     async def _dispatch(self, task_id: str) -> None:
         task = self.database.get(task_id)

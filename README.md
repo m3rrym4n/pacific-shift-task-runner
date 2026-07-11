@@ -101,6 +101,16 @@ The workflow expects these GitHub repository variables:
 
 Required endpoints are `POST /execute`, `GET /status/{execution_id}`, and `GET /result/{execution_id}`. On timeout the orchestrator also attempts `DELETE /execute/{execution_id}`. Runners should implement that optional endpoint to guarantee remote process termination; otherwise the task is still recorded as `timeout`, with the failed cancellation noted.
 
+## Runner queues
+
+`run_task` places every issue dispatch into an in-memory FIFO queue for the
+selected runner and returns a receipt with `task_id`, `status`, `position`,
+`queue_length`, and `runner`. Idle runners start the new task immediately with
+position `0`; busy runners keep later tasks queued until earlier work finishes.
+If the active task for a runner fails, times out, or raises during processing,
+that runner's queue halts and leaves pending tasks queued for human inspection.
+Queues are independent per runner and are not persisted across restarts.
+
 ## Docker
 
 ```bash
