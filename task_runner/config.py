@@ -61,6 +61,11 @@ class Settings:
     output_cap_bytes: int = 1_000_000
     poll_interval_seconds: float = 2
     github_token: str | None = None
+    dockhand_url: str | None = None
+    dockhand_token: str | None = None
+    dockhand_env: int | None = None
+    dockhand_verify_timeout_seconds: float = 60
+    dockhand_verify_interval_seconds: float = 2
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "runners", self.runners or {})
@@ -80,6 +85,8 @@ class Settings:
             isinstance(value, dict) for value in scheduled_task_values
         ):
             raise ValueError("TASK_RUNNER_SCHEDULED_TASKS must be a JSON array of scheduled task objects")
+        raw_dockhand_env = os.getenv("TASK_RUNNER_DOCKHAND_ENV")
+        dockhand_env = int(raw_dockhand_env) if raw_dockhand_env else None
         return cls(
             database_path=os.getenv("TASK_RUNNER_DATABASE", "/data/tasks.db"),
             runners=runners,
@@ -88,4 +95,13 @@ class Settings:
             output_cap_bytes=int(os.getenv("TASK_RUNNER_OUTPUT_CAP_BYTES", "1000000")),
             poll_interval_seconds=float(os.getenv("TASK_RUNNER_POLL_INTERVAL_SECONDS", "2")),
             github_token=os.getenv("GITHUB_TOKEN"),
+            dockhand_url=os.getenv("TASK_RUNNER_DOCKHAND_URL"),
+            dockhand_token=os.getenv("TASK_RUNNER_DOCKHAND_TOKEN"),
+            dockhand_env=dockhand_env,
+            dockhand_verify_timeout_seconds=float(
+                os.getenv("TASK_RUNNER_DOCKHAND_VERIFY_TIMEOUT_SECONDS", "60")
+            ),
+            dockhand_verify_interval_seconds=float(
+                os.getenv("TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS", "2")
+            ),
         )

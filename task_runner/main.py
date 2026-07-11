@@ -5,6 +5,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Settings
 from .database import Database
+from .dockhand import DockhandClient
 from .github import GitHubClient
 from .runner import RunnerClient
 from .service import TaskService
@@ -12,7 +13,19 @@ from .service import TaskService
 
 settings = Settings.from_env()
 database = Database(settings.database_path)
-service = TaskService(settings, database, GitHubClient(settings.github_token), RunnerClient())
+service = TaskService(
+    settings,
+    database,
+    GitHubClient(settings.github_token),
+    RunnerClient(),
+    DockhandClient(
+        settings.dockhand_url,
+        settings.dockhand_token,
+        env=settings.dockhand_env,
+        verify_timeout_seconds=settings.dockhand_verify_timeout_seconds,
+        verify_interval_seconds=settings.dockhand_verify_interval_seconds,
+    ),
+)
 mcp = FastMCP("Pacific Shift Task Runner", stateless_http=True, streamable_http_path="/")
 
 

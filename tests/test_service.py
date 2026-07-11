@@ -55,6 +55,22 @@ def test_interval_parser_rejects_non_positive_values():
         parse_interval_seconds("0s")
 
 
+def test_settings_reads_dockhand_configuration(monkeypatch):
+    monkeypatch.setenv("TASK_RUNNER_DOCKHAND_URL", "http://dockhand:3003")
+    monkeypatch.setenv("TASK_RUNNER_DOCKHAND_TOKEN", "dh_test")
+    monkeypatch.setenv("TASK_RUNNER_DOCKHAND_ENV", "2")
+    monkeypatch.setenv("TASK_RUNNER_DOCKHAND_VERIFY_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS", "3")
+
+    settings = Settings.from_env()
+
+    assert settings.dockhand_url == "http://dockhand:3003"
+    assert settings.dockhand_token == "dh_test"
+    assert settings.dockhand_env == 2
+    assert settings.dockhand_verify_timeout_seconds == 45
+    assert settings.dockhand_verify_interval_seconds == 3
+
+
 @pytest.mark.asyncio
 async def test_real_dispatch_lifecycle_and_tools(tmp_path):
     runner = FakeRunner(result={"result": "structured report", "log": "abc"})
