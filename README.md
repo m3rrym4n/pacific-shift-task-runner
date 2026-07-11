@@ -8,6 +8,7 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 |---|---:|---|
 | `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://192.168.1.68:7000"}` |
 | `TASK_RUNNER_SCHEDULED_TASKS` | `[]` | JSON array of scheduled issue dispatches |
+| `TASK_RUNNER_OPS_IMAGE_CHECKS` | `[]` | JSON array of scheduled operational image version-drift checks |
 | `TASK_RUNNER_DATABASE` | `/data/tasks.db` | SQLite database path |
 | `TASK_RUNNER_TIMEOUT_SECONDS` | `600` | Hard orchestration timeout |
 | `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
@@ -28,7 +29,7 @@ dedicated Task Runner account.
 
 ### Scheduled tasks
 
-Scheduled tasks reuse the same dispatch path as the `run_task` MCP tool. When a
+Issue scheduled tasks reuse the same dispatch path as the `run_task` MCP tool. When a
 configured interval fires, Task Runner creates a normal task row for the target
 repository issue and runner. The fire is visible in container logs and in
 `list_tasks`.
@@ -61,6 +62,43 @@ To add a scheduled job, add an object to `TASK_RUNNER_SCHEDULED_TASKS` and
 restart the container. To remove a scheduled job, remove its object from the
 array and restart the container. The `runner` value must match a key in
 `TASK_RUNNER_RUNNERS`.
+
+Ops Image checks use the same scheduler but do not create normal issue-dispatch
+tasks. They call the configured runner's version endpoint and, when drift is
+detected, trigger a dedicated GitHub Actions `workflow_dispatch`.
+
+Configure Ops Image checks with `TASK_RUNNER_OPS_IMAGE_CHECKS`:
+
+```json
+[
+  {
+    "name": "daily-codex-runner-rebuild-check",
+    "runner": "codex",
+    "workflow_repo": "m3rrym4n/pacific-shift-task-runner",
+    "workflow_id": "ops-codex-runner-rebuild.yml",
+    "ref": "main",
+    "interval": "1d"
+  }
+]
+```
+
+The Codex runner exposes `GET /codex/version`, returning installed version,
+latest npm version, and a `drift_detected` boolean. A drift result triggers the
+Ops Images workflow with the installed and target versions as inputs. The
+workflow builds `codex_runner` with `CODEX_VERSION=<target>`, tags the image as
+`<codex-version>-<repo-short-sha>`, pushes it to Zot, prunes the Zot repository
+to current plus N-1, and reports the ready image tag. It deliberately does not
+stop or start the running `codex-runner` container.
+
+The workflow expects these GitHub repository variables/secrets:
+
+| Name | Type | Purpose |
+|---|---|---|
+| `OPS_IMAGES_REGISTRY` | variable | Zot registry host, without scheme, for Docker push/login |
+| `OPS_IMAGES_CODEX_RUNNER_REPOSITORY` | variable | Zot repository name; defaults to `codex-runner` in the workflow |
+| `ZOT_USERNAME` | secret | Zot username for Docker login |
+| `ZOT_PASSWORD` | secret | Zot password for Docker login |
+| `ZOT_TOKEN` | secret | Bearer token used by the retention helper against Zot's registry API |
 
 ## Runner contract
 
@@ -121,6 +159,7 @@ docker run -d \
 
 docker exec codex-runner docker version
 docker exec codex-runner docker ps
+curl http://localhost:7000/codex/version
 ```
 
 Privileged mode allows Codex's own `workspace-write` sandbox to create and

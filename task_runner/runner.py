@@ -29,3 +29,7 @@ class RunnerClient:
         except httpx.HTTPError:
             return False
 
+    async def codex_version(self, url: str) -> dict:
+        response = await self.client.get(f"{url.rstrip('/')}/codex/version")
+        response.raise_for_status()
+        return response.json()

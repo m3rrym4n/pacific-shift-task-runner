@@ -51,3 +51,23 @@ def test_runner_prompt_requires_agent_owned_clone_and_github_workflow():
     assert "clone that repository" in prompt
     assert "use `git` and `gh`" in prompt
     assert prompt.endswith("issue prompt\n")
+
+
+def test_version_parser_accepts_codex_cli_output():
+    assert main._parse_version("codex-cli 0.142.5") == "0.142.5"
+    assert main._parse_version("0.144.1\n") == "0.144.1"
+
+
+def test_codex_version_endpoint_reports_drift(monkeypatch):
+    monkeypatch.setattr(main, "get_installed_codex_version", lambda: "0.142.5")
+    monkeypatch.setattr(main, "get_latest_codex_version", lambda: "0.144.1")
+
+    with TestClient(main.app) as client:
+        response = client.get("/codex/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "installed": "0.142.5",
+        "latest": "0.144.1",
+        "drift_detected": True,
+    }

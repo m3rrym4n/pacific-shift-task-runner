@@ -2,20 +2,31 @@ import asyncio
 
 import pytest
 
-from task_runner.config import ScheduledTask, Settings, parse_interval_seconds
+from task_runner.config import OpsImageCheck, ScheduledTask, Settings, parse_interval_seconds
 from task_runner.database import Database
 from task_runner.service import TaskService
 
 
 class FakeGitHub:
+    def __init__(self):
+        self.workflow_dispatches = []
+
     async def get_context(self, repo, issue_number):
         return "instructions", "Test issue", "acceptance criteria"
 
+    async def dispatch_workflow(self, repo, workflow_id, ref, inputs=None):
+        self.workflow_dispatches.append((repo, workflow_id, ref, inputs or {}))
+
 
 class FakeRunner:
-    def __init__(self, statuses=None, result=None):
+    def __init__(self, statuses=None, result=None, codex_version=None):
         self.statuses = iter(statuses or [{"status": "completed"}])
         self.result_data = result or {"result": "done", "log": "log output"}
+        self.codex_version_data = codex_version or {
+            "installed": "0.144.1",
+            "latest": "0.144.1",
+            "drift_detected": False,
+        }
         self.cancelled = False
         self.prompt = None
 
@@ -33,6 +44,9 @@ class FakeRunner:
         self.cancelled = True
         return True
 
+    async def codex_version(self, url):
+        return self.codex_version_data
+
 
 def make_service(tmp_path, runner, **overrides):
     values = dict(database_path=str(tmp_path / "tasks.db"), runners={"codex": "http://runner"}, poll_interval_seconds=0)
@@ -40,7 +54,10 @@ def make_service(tmp_path, runner, **overrides):
     settings = Settings(**values)
     database = Database(settings.database_path)
     database.initialize()
-    return TaskService(settings, database, FakeGitHub(), runner)
+    github = FakeGitHub()
+    service = TaskService(settings, database, github, runner)
+    service.fake_github = github
+    return service
 
 
 def test_interval_parser_accepts_seconds_minutes_hours_and_days():
@@ -69,6 +86,19 @@ def test_settings_reads_dockhand_configuration(monkeypatch):
     assert settings.dockhand_env == 2
     assert settings.dockhand_verify_timeout_seconds == 45
     assert settings.dockhand_verify_interval_seconds == 3
+
+
+def test_settings_reads_ops_image_checks(monkeypatch):
+    monkeypatch.setenv(
+        "TASK_RUNNER_OPS_IMAGE_CHECKS",
+        """[{"name":"codex","runner":"codex","workflow_repo":"owner/repo","workflow_id":"ops.yml","interval":"1d"}]""",
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.ops_image_checks == [
+        OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+    ]
 
 
 @pytest.mark.asyncio
@@ -143,3 +173,49 @@ async def test_scheduler_fires_configured_task_without_manual_dispatch(tmp_path)
     assert tasks[0]["issue_number"] == 2
     assert tasks[0]["runner"] == "codex"
     assert tasks[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_ops_image_check_dispatches_workflow_on_codex_version_drift(tmp_path):
+    runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
+    service = make_service(tmp_path, runner)
+    check = OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+
+    dispatched = await service.check_ops_image(check)
+
+    assert dispatched is True
+    assert service.fake_github.workflow_dispatches == [
+        (
+            "owner/repo",
+            "ops.yml",
+            "main",
+            {
+                "installed_codex_version": "0.142.5",
+                "target_codex_version": "0.144.1",
+                "runner": "codex",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_image_check_skips_workflow_when_versions_match(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    check = OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+
+    dispatched = await service.check_ops_image(check)
+
+    assert dispatched is False
+    assert service.fake_github.workflow_dispatches == []
+
+
+@pytest.mark.asyncio
+async def test_ops_image_check_falls_back_to_version_comparison_for_non_boolean_drift_flag(tmp_path):
+    runner = FakeRunner(codex_version={"installed": "0.144.1", "latest": "0.144.1", "drift_detected": "false"})
+    service = make_service(tmp_path, runner)
+    check = OpsImageCheck("codex", "codex", "owner/repo", "ops.yml", "main", 86400)
+
+    dispatched = await service.check_ops_image(check)
+
+    assert dispatched is False
+    assert service.fake_github.workflow_dispatches == []

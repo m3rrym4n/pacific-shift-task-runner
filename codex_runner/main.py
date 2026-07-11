@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -62,6 +63,34 @@ class ExecutionStore:
 
 store = ExecutionStore(os.getenv("CODEX_RUNNER_WORKSPACE_ROOT"))
 app = FastAPI(title="Pacific Shift Codex Runner")
+
+
+def _parse_version(output: str) -> str:
+    for token in output.replace("\n", " ").split():
+        parts = token.strip().split(".")
+        if len(parts) >= 3 and all(part.isdigit() for part in parts[:3]):
+            return ".".join(parts[:3])
+    raise ValueError(f"Could not parse version from output: {output!r}")
+
+
+def _command_output(command: list[str], timeout_seconds: float = 20) -> str:
+    completed = subprocess.run(
+        command,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout_seconds,
+    )
+    return completed.stdout.strip()
+
+
+def get_installed_codex_version() -> str:
+    return _parse_version(_command_output(["codex", "--version"]))
+
+
+def get_latest_codex_version() -> str:
+    return _parse_version(_command_output(["npm", "view", "@openai/codex", "version"]))
 
 
 def _final_message(output: str) -> str:
@@ -145,6 +174,17 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
 @app.get("/")
 def health() -> dict[str, str]:
     return {"service": "pacific-shift-codex-runner", "status": "ok"}
+
+
+@app.get("/codex/version")
+def codex_version() -> dict[str, str | bool]:
+    installed = get_installed_codex_version()
+    latest = get_latest_codex_version()
+    return {
+        "installed": installed,
+        "latest": latest,
+        "drift_detected": installed != latest,
+    }
 
 
 @app.post("/execute", status_code=status.HTTP_202_ACCEPTED)
