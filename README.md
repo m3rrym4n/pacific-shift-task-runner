@@ -7,6 +7,7 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 | Variable | Default | Purpose |
 |---|---:|---|
 | `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://192.168.1.68:7000"}` |
+| `TASK_RUNNER_SCHEDULED_TASKS` | `[]` | JSON array of scheduled issue dispatches |
 | `TASK_RUNNER_DATABASE` | `/data/tasks.db` | SQLite database path |
 | `TASK_RUNNER_TIMEOUT_SECONDS` | `600` | Hard orchestration timeout |
 | `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
@@ -14,6 +15,42 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 | `GITHUB_TOKEN` | unset | Optional token for private repositories or higher API limits |
 
 The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
+
+### Scheduled tasks
+
+Scheduled tasks reuse the same dispatch path as the `run_task` MCP tool. When a
+configured interval fires, Task Runner creates a normal task row for the target
+repository issue and runner. The fire is visible in container logs and in
+`list_tasks`.
+
+Configure schedules with `TASK_RUNNER_SCHEDULED_TASKS`:
+
+```json
+[
+  {
+    "name": "daily-codex-health-check",
+    "repo": "m3rrym4n/pacific-shift-task-runner",
+    "issue_number": 15,
+    "runner": "codex",
+    "interval": "1d"
+  }
+]
+```
+
+`interval` accepts a positive number of seconds or a string with one of these
+suffixes:
+
+| Suffix | Meaning | Example |
+|---|---:|---|
+| `s` | seconds | `120s` |
+| `m` | minutes | `2m` |
+| `h` | hours | `6h` |
+| `d` | days | `1d` |
+
+To add a scheduled job, add an object to `TASK_RUNNER_SCHEDULED_TASKS` and
+restart the container. To remove a scheduled job, remove its object from the
+array and restart the container. The `runner` value must match a key in
+`TASK_RUNNER_RUNNERS`.
 
 ## Runner contract
 
@@ -33,6 +70,7 @@ docker run -d \
   -p 6002:6002 \
   -v pacific-shift-task-runner-data:/data \
   -e 'TASK_RUNNER_RUNNERS={"codex":"http://192.168.1.68:7000"}' \
+  -e 'TASK_RUNNER_SCHEDULED_TASKS=[]' \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-task-runner:latest
 ```

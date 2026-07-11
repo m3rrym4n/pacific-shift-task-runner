@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from task_runner.config import Settings
+from task_runner.config import ScheduledTask, Settings, parse_interval_seconds
 from task_runner.database import Database
 from task_runner.service import TaskService
 
@@ -41,6 +41,18 @@ def make_service(tmp_path, runner, **overrides):
     database = Database(settings.database_path)
     database.initialize()
     return TaskService(settings, database, FakeGitHub(), runner)
+
+
+def test_interval_parser_accepts_seconds_minutes_hours_and_days():
+    assert parse_interval_seconds("15") == 15
+    assert parse_interval_seconds("2m") == 120
+    assert parse_interval_seconds("1h") == 3600
+    assert parse_interval_seconds("1d") == 86400
+
+
+def test_interval_parser_rejects_non_positive_values():
+    with pytest.raises(ValueError, match="greater than zero"):
+        parse_interval_seconds("0s")
 
 
 @pytest.mark.asyncio
@@ -88,3 +100,30 @@ async def test_unknown_runner_is_rejected_without_persistence(tmp_path):
         await service.run_task("owner/repo", 2, "claude")
     assert service.list_tasks() == []
 
+
+@pytest.mark.asyncio
+async def test_scheduler_fires_configured_task_without_manual_dispatch(tmp_path):
+    runner = FakeRunner()
+    scheduled_task = ScheduledTask(
+        name="health-check",
+        repo="owner/repo",
+        issue_number=2,
+        runner="codex",
+        interval_seconds=0.01,
+    )
+    service = make_service(tmp_path, runner, scheduled_tasks=[scheduled_task])
+
+    service.start_scheduler()
+    for _ in range(20):
+        if service.list_tasks():
+            break
+        await asyncio.sleep(0.01)
+    await service.stop_scheduler()
+    await asyncio.gather(*service._jobs)
+
+    tasks = service.list_tasks()
+    assert len(tasks) >= 1
+    assert tasks[0]["repo"] == "owner/repo"
+    assert tasks[0]["issue_number"] == 2
+    assert tasks[0]["runner"] == "codex"
+    assert tasks[0]["status"] == "completed"

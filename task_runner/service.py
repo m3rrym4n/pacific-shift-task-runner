@@ -1,9 +1,10 @@
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import Settings
+from .config import ScheduledTask, Settings
 from .database import Database
 from .github import GitHubClient
 from .runner import RunnerClient
@@ -20,6 +21,43 @@ class TaskService:
         self.github = github
         self.runner = runner
         self._jobs: set[asyncio.Task] = set()
+        self._scheduler_jobs: set[asyncio.Task] = set()
+        self.logger = logging.getLogger(__name__)
+
+    def start_scheduler(self) -> None:
+        if self._scheduler_jobs:
+            return
+        for scheduled_task in self.settings.scheduled_tasks:
+            job = asyncio.create_task(self._scheduled_loop(scheduled_task))
+            self._scheduler_jobs.add(job)
+            job.add_done_callback(self._scheduler_jobs.discard)
+            self.logger.info(
+                "Scheduled task '%s' enabled for %s#%s on runner '%s' every %gs",
+                scheduled_task.name,
+                scheduled_task.repo,
+                scheduled_task.issue_number,
+                scheduled_task.runner,
+                scheduled_task.interval_seconds,
+            )
+
+    async def stop_scheduler(self) -> None:
+        if not self._scheduler_jobs:
+            return
+        for job in self._scheduler_jobs:
+            job.cancel()
+        await asyncio.gather(*self._scheduler_jobs, return_exceptions=True)
+        self._scheduler_jobs.clear()
+
+    async def _scheduled_loop(self, scheduled_task: ScheduledTask) -> None:
+        while True:
+            await asyncio.sleep(scheduled_task.interval_seconds)
+            try:
+                task_id = await self.run_task(
+                    scheduled_task.repo, scheduled_task.issue_number, scheduled_task.runner
+                )
+                self.logger.info("Scheduled task '%s' fired and created task %s", scheduled_task.name, task_id)
+            except Exception:
+                self.logger.exception("Scheduled task '%s' failed to fire", scheduled_task.name)
 
     async def run_task(self, repo: str, issue_number: int, runner_name: str) -> str:
         if runner_name not in self.settings.runners:
