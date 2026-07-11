@@ -59,6 +59,7 @@ mcp_app = mcp.streamable_http_app()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.initialize()
+    service.resume_running_tasks()
     service.start_scheduler()
     async with mcp.session_manager.run():
         try:

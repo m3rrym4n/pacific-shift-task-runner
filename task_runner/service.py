@@ -59,6 +59,20 @@ class TaskService:
                 ops_check.interval_seconds,
             )
 
+    def resume_running_tasks(self) -> None:
+        for task in self.database.list():
+            if task["status"] != "running" or not task.get("execution_id"):
+                continue
+            if any(not job.done() and getattr(job, "_task_runner_task_id", None) == task["id"] for job in self._jobs):
+                continue
+            job = asyncio.create_task(
+                self._resume_monitor(task["id"], task["runner_url"], task["execution_id"])
+            )
+            setattr(job, "_task_runner_task_id", task["id"])
+            self._jobs.add(job)
+            job.add_done_callback(self._jobs.discard)
+            self.logger.info("Resumed monitoring task %s with execution %s", task["id"], task["execution_id"])
+
     async def stop_scheduler(self) -> None:
         if not self._scheduler_jobs:
             return
@@ -114,34 +128,67 @@ class TaskService:
                 task["runner_url"], task["repo"], task["issue_number"], prompt
             )
             self.database.update(task_id, status="running", execution_id=execution_id)
-            await asyncio.wait_for(
-                self._monitor(task_id, task["runner_url"], execution_id),
-                timeout=self.settings.timeout_seconds,
-            )
+            await self._monitor_with_timeout(task_id, task["runner_url"], execution_id, self.settings.timeout_seconds)
         except asyncio.TimeoutError:
-            current = self.database.get(task_id) or {}
-            execution_id = current.get("execution_id")
-            cancelled = bool(execution_id) and await self.runner.cancel(task["runner_url"], execution_id)
-            detail = "Runner cancellation accepted." if cancelled else "Runner cancellation unavailable or rejected."
-            self.database.update(task_id, status="timeout", error=f"Task exceeded {self.settings.timeout_seconds:g}s. {detail}", completed_at=utcnow())
+            await self._record_timeout(task_id, task["runner_url"])
         except Exception as exc:
             self.database.update(task_id, status="failed", error=f"{type(exc).__name__}: {exc}", completed_at=utcnow())
 
+    async def _resume_monitor(self, task_id: str, url: str, execution_id: str) -> None:
+        try:
+            if await self._record_terminal_if_available(task_id, url, execution_id):
+                return
+            remaining_timeout = self._remaining_timeout(task_id)
+            if remaining_timeout <= 0:
+                await self._record_timeout(task_id, url)
+                return
+            await self._monitor_with_timeout(task_id, url, execution_id, remaining_timeout)
+        except asyncio.TimeoutError:
+            await self._record_timeout(task_id, url)
+        except Exception as exc:
+            self.database.update(task_id, status="failed", error=f"{type(exc).__name__}: {exc}", completed_at=utcnow())
+
+    async def _monitor_with_timeout(self, task_id: str, url: str, execution_id: str, timeout: float) -> None:
+        await asyncio.wait_for(self._monitor(task_id, url, execution_id), timeout=timeout)
+
     async def _monitor(self, task_id: str, url: str, execution_id: str) -> None:
         while True:
-            status_data = await self.runner.status(url, execution_id)
-            status = status_data.get("status")
-            if status in {"completed", "failed", "timeout"}:
-                result_data = await self.runner.result(url, execution_id)
-                result = result_data.get("result") or result_data.get("report") or ""
-                log = result_data.get("log") or result_data.get("stdout") or ""
-                capped_log, truncated = self._cap(str(log))
-                self.database.update(
-                    task_id, status=status, result=str(result), log=capped_log,
-                    output_truncated=int(truncated), error=result_data.get("error"), completed_at=utcnow(),
-                )
+            if await self._record_terminal_if_available(task_id, url, execution_id):
                 return
             await asyncio.sleep(self.settings.poll_interval_seconds)
+
+    async def _record_terminal_if_available(self, task_id: str, url: str, execution_id: str) -> bool:
+        status_data = await self.runner.status(url, execution_id)
+        status = status_data.get("status")
+        if status not in {"completed", "failed", "timeout"}:
+            return False
+        result_data = await self.runner.result(url, execution_id)
+        result = result_data.get("result") or result_data.get("report") or ""
+        log = result_data.get("log") or result_data.get("stdout") or ""
+        capped_log, truncated = self._cap(str(log))
+        self.database.update(
+            task_id, status=status, result=str(result), log=capped_log,
+            output_truncated=int(truncated), error=result_data.get("error"), completed_at=utcnow(),
+        )
+        return True
+
+    async def _record_timeout(self, task_id: str, url: str) -> None:
+        current = self.database.get(task_id) or {}
+        execution_id = current.get("execution_id")
+        cancelled = bool(execution_id) and await self.runner.cancel(url, execution_id)
+        detail = "Runner cancellation accepted." if cancelled else "Runner cancellation unavailable or rejected."
+        self.database.update(task_id, status="timeout", error=f"Task exceeded {self.settings.timeout_seconds:g}s. {detail}", completed_at=utcnow())
+
+    def _remaining_timeout(self, task_id: str) -> float:
+        task = self.database.get(task_id) or {}
+        started_at = task.get("started_at")
+        if not started_at:
+            return self.settings.timeout_seconds
+        started = datetime.fromisoformat(str(started_at))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        return max(0, self.settings.timeout_seconds - elapsed)
 
     def _cap(self, text: str) -> tuple[str, bool]:
         encoded = text.encode("utf-8")
