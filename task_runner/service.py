@@ -6,6 +6,7 @@ from typing import Any
 
 from .config import ScheduledTask, Settings
 from .database import Database
+from .dockhand import ContainerDeployResult, DockhandClient
 from .github import GitHubClient
 from .runner import RunnerClient
 
@@ -15,11 +16,19 @@ def utcnow() -> str:
 
 
 class TaskService:
-    def __init__(self, settings: Settings, database: Database, github: GitHubClient, runner: RunnerClient):
+    def __init__(
+        self,
+        settings: Settings,
+        database: Database,
+        github: GitHubClient,
+        runner: RunnerClient,
+        dockhand: DockhandClient | None = None,
+    ):
         self.settings = settings
         self.database = database
         self.github = github
         self.runner = runner
+        self.dockhand = dockhand
         self._jobs: set[asyncio.Task] = set()
         self._scheduler_jobs: set[asyncio.Task] = set()
         self.logger = logging.getLogger(__name__)
@@ -149,6 +158,11 @@ Follow the repository instructions and issue acceptance criteria. Keep work with
     def list_tasks(self) -> list[dict[str, Any]]:
         keys = ("id", "repo", "issue_number", "runner", "status", "output_truncated", "created_at", "completed_at")
         return [{key: task[key] for key in keys} for task in self.database.list()]
+
+    async def deploy_container_swap(self, stop_container: str, start_container: str) -> ContainerDeployResult:
+        if self.dockhand is None:
+            raise RuntimeError("Dockhand deploy capability is not configured")
+        return await self.dockhand.deploy_container_swap(stop_container, start_container)
 
     def _required(self, task_id: str) -> dict[str, Any]:
         task = self.database.get(task_id)

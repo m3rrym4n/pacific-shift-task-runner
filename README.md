@@ -13,8 +13,18 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 | `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
 | `TASK_RUNNER_POLL_INTERVAL_SECONDS` | `2` | Runner status polling interval |
 | `GITHUB_TOKEN` | unset | Optional token for private repositories or higher API limits |
+| `TASK_RUNNER_DOCKHAND_URL` | unset | Dockhand REST API base URL for internal container deploy operations |
+| `TASK_RUNNER_DOCKHAND_TOKEN` | unset | Dedicated Task Runner Dockhand API token (`dh_...`); do not reuse `dockhand-mcp` credentials |
+| `TASK_RUNNER_DOCKHAND_ENV` | unset | Optional Dockhand environment ID for container deploy operations |
+| `TASK_RUNNER_DOCKHAND_VERIFY_TIMEOUT_SECONDS` | `60` | Maximum time to wait for a started container to verify as running or healthy |
+| `TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS` | `2` | Poll interval while verifying a started container |
 
 The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
+
+Dockhand configuration is an internal Task Runner capability for Ops Images
+deploy steps. It is not exposed as an MCP tool. The token must be supplied at
+runtime through `TASK_RUNNER_DOCKHAND_TOKEN` and should be generated under a
+dedicated Task Runner account.
 
 ### Scheduled tasks
 
