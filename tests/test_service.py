@@ -127,6 +127,33 @@ async def test_timeout_is_persisted_and_cancellation_attempted(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_startup_resumes_running_task_and_records_completed_result(tmp_path):
+    database_path = str(tmp_path / "tasks.db")
+    settings = Settings(database_path=database_path, runners={"codex": "http://runner"}, poll_interval_seconds=0)
+    database = Database(settings.database_path)
+    database.initialize()
+    database.create_task("task-1", "owner/repo", 2, "codex", "http://runner")
+    database.update(
+        "task-1",
+        status="running",
+        execution_id="execution-1",
+        started_at="2026-07-11T13:22:16+00:00",
+    )
+
+    runner = FakeRunner(result={"result": "structured report", "log": "finished log"})
+    service = TaskService(settings, database, FakeGitHub(), runner)
+
+    service.resume_running_tasks()
+    await asyncio.gather(*service._jobs)
+
+    result = service.get_task_result("task-1")
+    assert result["status"] == "completed"
+    assert result["result"] == "structured report"
+    assert result["completed_at"] is not None
+    assert service.get_task_log("task-1")["log"] == "finished log"
+
+
+@pytest.mark.asyncio
 async def test_output_cap_is_visible(tmp_path):
     runner = FakeRunner(result={"result": "done", "log": "x" * 100})
     service = make_service(tmp_path, runner, output_cap_bytes=60)
