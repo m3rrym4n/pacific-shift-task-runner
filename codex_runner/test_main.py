@@ -6,6 +6,14 @@ from fastapi.testclient import TestClient
 from codex_runner import main
 
 
+def test_health_endpoint():
+    with TestClient(main.app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {"service": "pacific-shift-codex-runner", "status": "ok"}
+
+
 def test_execute_lifecycle_and_result(monkeypatch, tmp_path):
     script = tmp_path / "codex"
     script.write_text(
