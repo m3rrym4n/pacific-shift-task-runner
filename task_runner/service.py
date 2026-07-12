@@ -492,6 +492,7 @@ class TaskService:
             output_truncated=int(truncated), error=result_data.get("error"),
             resets_at=result_data.get("resets_at"), completed_at=utcnow(),
             session_id=result_data.get("session_id"),
+            branch=result_data.get("branch"), pr_url=result_data.get("pr_url"),
             quota_auto_resume=int(bool(result_data.get("quota_auto_resume"))),
         )
         return True
@@ -571,6 +572,48 @@ has a durable written reference in the normal task log/result model.
     def list_tasks(self) -> list[dict[str, Any]]:
         keys = ("id", "repo", "issue_number", "runner", "status", "output_truncated", "created_at", "completed_at")
         return [{key: task[key] for key in keys} for task in self.database.list()]
+
+    def list_dashboard_tasks(
+        self, window: Literal["24h", "7d", "30d", "all"], limit: int | None, offset: int
+    ) -> dict[str, Any]:
+        cutoffs = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+        cutoff = None
+        if window != "all":
+            cutoff = datetime.now(timezone.utc).timestamp() - cutoffs[window] * 60 * 60
+
+        matching = []
+        for task in self.database.list():
+            created_at = datetime.fromisoformat(str(task["created_at"]).replace("Z", "+00:00"))
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if cutoff is None or created_at.timestamp() >= cutoff:
+                matching.append(task)
+
+        running_count = sum(task["status"] in {"queued", "dispatching", "running"} for task in matching)
+        selected = matching[offset : offset + limit if limit is not None else None]
+        keys = (
+            "id", "repo", "issue_number", "runner", "status", "created_at", "completed_at",
+            "branch", "pr_url", "resets_at", "session_id",
+        )
+        tasks = []
+        for task in selected:
+            item = {key: task[key] for key in keys}
+            if item["status"] in {"queued", "dispatching"}:
+                item["status"] = "running"
+            tasks.append(item)
+        return {"tasks": tasks, "running_count": running_count}
+
+    async def get_queue_states(self) -> dict[str, dict[str, Any]]:
+        async with self._queue_lock:
+            return {
+                runner_name: {
+                    "active_task_id": queue.active_task_id,
+                    "pending": list(queue.pending),
+                    "halt_state": queue.halt_state,
+                    "resumes_at": queue.resumes_at,
+                }
+                for runner_name, queue in self._runner_queues.items()
+            }
 
     async def deploy_container_swap(self, stop_container: str, start_container: str) -> ContainerDeployResult:
         if self.dockhand is None:

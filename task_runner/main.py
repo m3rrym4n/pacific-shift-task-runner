@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
+from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from mcp.server.fastmcp import FastMCP
 
 from .config import Settings
@@ -86,6 +87,20 @@ app = FastAPI(title="Pacific Shift Task Runner", lifespan=lifespan)
 @app.get("/")
 def health() -> dict[str, str]:
     return {"service": "pacific-shift-task-runner", "status": "ok"}
+
+
+@app.get("/api/tasks")
+def api_tasks(
+    window: Literal["24h", "7d", "30d", "all"] = "24h",
+    limit: int | None = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return service.list_dashboard_tasks(window, limit, offset)
+
+
+@app.get("/api/queues")
+async def api_queues() -> dict:
+    return await service.get_queue_states()
 
 
 app.mount("/mcp", mcp_app)

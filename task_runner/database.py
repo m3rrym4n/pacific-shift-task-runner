@@ -28,6 +28,7 @@ class Database:
                     execution_id TEXT, prompt TEXT, result TEXT, log TEXT NOT NULL DEFAULT '',
                     output_truncated INTEGER NOT NULL DEFAULT 0, error TEXT,
                     resets_at TEXT, session_id TEXT, quota_auto_resume INTEGER NOT NULL DEFAULT 0,
+                    branch TEXT, pr_url TEXT,
                     created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
                 )
             """)
@@ -38,6 +39,10 @@ class Database:
                 db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT")
             if "quota_auto_resume" not in columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN quota_auto_resume INTEGER NOT NULL DEFAULT 0")
+            if "branch" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN branch TEXT")
+            if "pr_url" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN pr_url TEXT")
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> None:
         with self._lock, self.connect() as db:
