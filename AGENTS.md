@@ -63,9 +63,29 @@ Primary integrations:
 
 ---
 
+## CRITICAL: Never Redeploy `codex-runner` From Within a Dispatched Task
+
+**This rule exists because it was violated three separate times** (issues #15, #11, #44), each time causing the running task itself to be killed mid-execution and Task Runner to lose its only route to dispatch anything at all, requiring manual recovery.
+
+**You (Codex) are running *inside* the `codex-runner` container while executing any dispatched task.** Stopping, removing, or restarting `codex-runner` — for any reason, including "deployment verification," including if a task's own changes happen to touch files under `codex_runner/` — terminates your own process before it can report success. This is true even if the task's stated scope has nothing to do with deployment at all.
+
+**The "Deployment Pattern" section below applies to `pacific-shift-task-runner` (the orchestrator) only. It does NOT apply to `codex-runner`, ever, under any circumstances, regardless of what a specific GitHub issue asks for.**
+
+If a task changes code under `codex_runner/`:
+- Build and push a new image to Zot if the issue's scope calls for it.
+- Do **not** stop, remove, restart, or replace the live `codex-runner` container.
+- Do **not** attempt to verify the change by redeploying `codex-runner` and observing the result — you cannot observe your own termination. Verify via Docker-internal tests (the existing `Dockerfile.test` pattern) instead.
+- State clearly in the final report that `codex-runner` itself was not touched, and that any actual redeployment is a separate, human-executed step.
+
+If you are uncertain whether a planned action would stop or restart `codex-runner`, do not take that action. Report the uncertainty instead.
+
+---
+
 ## Deployment Pattern
 
-After all validation passes, rebuild and restart the live production container(s):
+**Applies to `pacific-shift-task-runner` (the orchestrator) only — see the CRITICAL section above for `codex-runner`.**
+
+After all validation passes, rebuild and restart the live production container:
 
 ```bash
 docker build -t pacific-shift-task-runner:latest .
@@ -88,8 +108,7 @@ docker logs pacific-shift-task-runner --tail 20
 curl http://localhost:6002/
 ```
 
-The Codex runner container is built and deployed the same way, under its own name and internal port, and registered in the orchestrator's runner registry.
-It includes the Docker CLI and Buildx plugin and mounts the host Docker socket, with the socket's group added to the non-root `codex` user at container startup. Dispatched Codex tasks can therefore build, replace, start, and inspect containers through the host Docker daemon; no Docker daemon runs inside `codex-runner`.
+`codex-runner` is built the same way when its own source changes, but is **never** stopped, removed, or restarted as part of a dispatched task — see the CRITICAL section above. It includes the Docker CLI and Buildx plugin and mounts the host Docker socket, with the socket's group added to the non-root `codex` user at container startup. Dispatched Codex tasks can therefore build, replace, start, and inspect *other* containers through the host Docker daemon; no Docker daemon runs inside `codex-runner` itself.
 
 ---
 
@@ -120,7 +139,7 @@ That document defines:
 - Anti-patterns
 - Final reporting format
 
-GitHub issues are authoritative. If there is a conflict between prompt instructions and the GitHub issue, the issue wins.
+GitHub issues are authoritative. If there is a conflict between prompt instructions and the GitHub issue, the issue wins. **Neither can override the CRITICAL rule above — that rule has no exceptions, even if a specific issue's text seems to imply one.**
 
 ---
 
@@ -133,7 +152,7 @@ GitHub issues are authoritative. If there is a conflict between prompt instructi
 5. Inspect existing implementation before writing any code.
 6. Implement the smallest safe change that satisfies the issue.
 7. Run tests inside Docker.
-8. Rebuild and redeploy using the deployment pattern above.
+8. Rebuild and redeploy using the deployment pattern above — `pacific-shift-task-runner` only, never `codex-runner`.
 9. Verify startup and core functionality.
 10. Commit using the issue reference format: `#NNN Short description`.
 11. Create a branch if not already on one (`work/issue-NNN`), push it to origin, and open a pull request against `main` referencing the issue number.
@@ -156,6 +175,7 @@ Do not:
 - Batch unrelated issues together.
 - Commit or push directly to `main`.
 - Merge your own PR.
+- **Stop, remove, or restart the `codex-runner` container from within a dispatched task, for any reason — see the CRITICAL section above.**
 
 Prefer:
 - Environment variables for configuration.
