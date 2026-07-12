@@ -17,6 +17,21 @@ class RunnerClient:
         response.raise_for_status()
         return response.json()
 
+    async def resume(
+        self, url: str, repo: str, issue_number: int, prompt: str, session_id: str
+    ) -> str:
+        response = await self.client.post(
+            f"{url.rstrip('/')}/resume",
+            json={
+                "repo": repo,
+                "issue_number": issue_number,
+                "prompt": prompt,
+                "session_id": session_id,
+            },
+        )
+        response.raise_for_status()
+        return response.json()["execution_id"]
+
     async def result(self, url: str, execution_id: str) -> dict:
         response = await self.client.get(f"{url.rstrip('/')}/result/{execution_id}")
         response.raise_for_status()

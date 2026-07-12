@@ -153,6 +153,10 @@ class QuotaThenSuccessRunner:
         self.executions.append((url, repo, issue_number))
         return f"execution-{len(self.executions)}"
 
+    async def resume(self, url, repo, issue_number, prompt, session_id):
+        self.executions.append((url, repo, issue_number, session_id))
+        return f"execution-{len(self.executions)}"
+
     async def status(self, url, execution_id):
         return {"status": "quota_exceeded" if execution_id == "execution-1" else "completed"}
 
@@ -163,6 +167,8 @@ class QuotaThenSuccessRunner:
                 "error": "Codex usage quota exceeded",
                 "log": "quota exhausted",
                 "resets_at": self.resets_at,
+                "session_id": "session-1",
+                "quota_auto_resume": True,
             }
         return {"status": "completed", "result": "done", "log": "completed after reset"}
 
@@ -402,8 +408,8 @@ async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tm
     assert service._runner_queues["codex"].halt_state == "quota_halted"
     assert service._runner_queues["codex"].resumes_at == resets_at
     assert queued["status"] == "queued"
-    assert queued["position"] == 0
-    assert queued["queue_length"] == 1
+    assert queued["position"] == 1
+    assert queued["queue_length"] == 2
     assert queued["resumes_at"] == resets_at
     assert len(runner.executions) == 1
 
@@ -413,8 +419,33 @@ async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tm
         await asyncio.sleep(0.005)
 
     assert service.get_task_result(queued["task_id"])["status"] == "completed"
+    assert service.get_task_result(quota_task["task_id"])["status"] == "completed"
     assert service._runner_queues["codex"].halt_state is None
-    assert len(runner.executions) == 2
+    assert len(runner.executions) == 3
+    assert runner.executions[1][3] == "session-1"
+
+
+@pytest.mark.asyncio
+async def test_phrasing_only_quota_detection_is_a_generic_halt(tmp_path):
+    resets_at = (datetime.now(timezone.utc) + timedelta(seconds=0.01)).isoformat()
+    runner = FakeRunner(
+        result={
+            "status": "quota_exceeded",
+            "error": "Codex usage limit reached",
+            "log": "You've hit your usage limit",
+            "resets_at": resets_at,
+            "session_id": "session-1",
+            "quota_auto_resume": False,
+        }
+    )
+    runner.statuses = iter([{"status": "quota_exceeded"}])
+    service = make_service(tmp_path, runner)
+
+    task = await service.run_task("owner/repo", 2, "codex")
+    await asyncio.gather(*service._jobs)
+
+    assert service.get_task_result(task["task_id"])["status"] == "quota_exceeded"
+    assert service._runner_queues["codex"].halt_state == "halted"
 
 
 @pytest.mark.asyncio

@@ -240,7 +240,12 @@ class TaskService:
                 if task.get("status") != "completed":
                     resets_at = task.get("resets_at")
                     resume_time = self._parse_resume_time(resets_at) if resets_at else None
-                    if task.get("status") == "quota_exceeded" and resume_time is not None:
+                    if (
+                        task.get("status") == "quota_exceeded"
+                        and task.get("quota_auto_resume")
+                        and task.get("session_id")
+                        and resume_time is not None
+                    ):
                         self.logger.warning(
                             "Runner queue '%s' quota-halted after task %s until %s",
                             runner_name,
@@ -249,6 +254,7 @@ class TaskService:
                         )
                         async with self._queue_lock:
                             queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                            queue.pending.appendleft(task_id)
                             queue.halt_state = "quota_halted"
                             queue.resumes_at = str(resets_at)
                         resume_job = asyncio.create_task(
@@ -317,12 +323,24 @@ class TaskService:
         task = self.database.get(task_id)
         assert task is not None
         try:
-            agents, title, body = await self.github.get_context(task["repo"], task["issue_number"])
-            prompt = self.build_prompt(task["repo"], task["issue_number"], agents, title, body)
-            self.database.update(task_id, status="dispatching", prompt=prompt, started_at=utcnow())
-            execution_id = await self.runner.execute(
-                task["runner_url"], task["repo"], task["issue_number"], prompt
-            )
+            if task["status"] == "quota_exceeded" and task.get("session_id"):
+                prompt = task.get("prompt") or ""
+                self.logger.info(
+                    "Resuming quota-interrupted task %s with Codex session %s",
+                    task_id,
+                    task["session_id"],
+                )
+                self.database.update(task_id, status="dispatching", completed_at=None)
+                execution_id = await self.runner.resume(
+                    task["runner_url"], task["repo"], task["issue_number"], prompt, task["session_id"]
+                )
+            else:
+                agents, title, body = await self.github.get_context(task["repo"], task["issue_number"])
+                prompt = self.build_prompt(task["repo"], task["issue_number"], agents, title, body)
+                self.database.update(task_id, status="dispatching", prompt=prompt, started_at=utcnow())
+                execution_id = await self.runner.execute(
+                    task["runner_url"], task["repo"], task["issue_number"], prompt
+                )
             self.database.update(task_id, status="running", execution_id=execution_id)
             await self._monitor_with_timeout(task_id, task["runner_url"], execution_id, self.settings.timeout_seconds)
         except asyncio.TimeoutError:
@@ -473,6 +491,8 @@ class TaskService:
             task_id, status=status, result=str(result), log=capped_log,
             output_truncated=int(truncated), error=result_data.get("error"),
             resets_at=result_data.get("resets_at"), completed_at=utcnow(),
+            session_id=result_data.get("session_id"),
+            quota_auto_resume=int(bool(result_data.get("quota_auto_resume"))),
         )
         return True
 
@@ -539,7 +559,7 @@ has a durable written reference in the normal task log/result model.
         return {
             key: task[key]
             for key in (
-                "id", "status", "result", "error", "resets_at", "output_truncated",
+                "id", "status", "result", "error", "resets_at", "session_id", "output_truncated",
                 "created_at", "completed_at",
             )
         }
