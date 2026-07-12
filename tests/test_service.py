@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -119,6 +120,32 @@ class PerRunnerStatusRunner:
 
     async def codex_version(self, url):
         return {"installed": "0.144.1", "latest": "0.144.1", "drift_detected": False}
+
+
+class QuotaThenSuccessRunner:
+    def __init__(self, resets_at):
+        self.resets_at = resets_at
+        self.executions = []
+
+    async def execute(self, url, repo, issue_number, prompt):
+        self.executions.append((url, repo, issue_number))
+        return f"execution-{len(self.executions)}"
+
+    async def status(self, url, execution_id):
+        return {"status": "quota_exceeded" if execution_id == "execution-1" else "completed"}
+
+    async def result(self, url, execution_id):
+        if execution_id == "execution-1":
+            return {
+                "status": "quota_exceeded",
+                "error": "Codex usage quota exceeded",
+                "log": "quota exhausted",
+                "resets_at": self.resets_at,
+            }
+        return {"status": "completed", "result": "done", "log": "completed after reset"}
+
+    async def cancel(self, url, execution_id):
+        return True
 
 
 def make_service(tmp_path, runner, dockhand=None, **overrides):
@@ -331,6 +358,58 @@ async def test_failed_active_item_halts_runner_queue_and_logs(tmp_path, caplog):
     assert service.get_task_result(second["task_id"])["status"] == "queued"
     assert len(runner.executions) == 1
     assert "Runner queue 'codex' halted" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tmp_path):
+    resets_at = (datetime.now(timezone.utc) + timedelta(seconds=0.1)).isoformat()
+    runner = QuotaThenSuccessRunner(resets_at)
+    service = make_service(tmp_path, runner, poll_interval_seconds=0.001)
+
+    quota_task = await service.run_task("owner/repo", 2, "codex")
+    for _ in range(100):
+        if service._runner_queues["codex"].halt_state == "quota_halted":
+            break
+        await asyncio.sleep(0.001)
+
+    queued = await service.run_task("owner/repo", 3, "codex")
+
+    quota_result = service.get_task_result(quota_task["task_id"])
+    assert quota_result["status"] == "quota_exceeded"
+    assert quota_result["resets_at"] == resets_at
+    assert service._runner_queues["codex"].halt_state == "quota_halted"
+    assert service._runner_queues["codex"].resumes_at == resets_at
+    assert queued["status"] == "queued"
+    assert queued["position"] == 0
+    assert queued["queue_length"] == 1
+    assert queued["resumes_at"] == resets_at
+    assert len(runner.executions) == 1
+
+    for _ in range(100):
+        if service.get_task_result(queued["task_id"])["status"] == "completed":
+            break
+        await asyncio.sleep(0.005)
+
+    assert service.get_task_result(queued["task_id"])["status"] == "completed"
+    assert service._runner_queues["codex"].halt_state is None
+    assert len(runner.executions) == 2
+
+
+@pytest.mark.asyncio
+async def test_generic_halt_does_not_auto_resume(tmp_path):
+    runner = PerRunnerStatusRunner({"http://runner": "failed"})
+    service = make_service(tmp_path, runner)
+
+    failed = await service.run_task("owner/repo", 2, "codex")
+    queued = await service.run_task("owner/repo", 3, "codex")
+    await asyncio.gather(*service._jobs)
+    await asyncio.sleep(0.05)
+
+    assert service.get_task_result(failed["task_id"])["status"] == "failed"
+    assert service.get_task_result(queued["task_id"])["status"] == "queued"
+    assert service._runner_queues["codex"].halt_state == "halted"
+    assert "resumes_at" not in queued
+    assert len(runner.executions) == 1
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from threading import Lock
 from typing import Any
 
 
-TERMINAL_STATES = {"completed", "failed", "timeout"}
+TERMINAL_STATES = {"completed", "failed", "timeout", "quota_exceeded"}
 
 
 class Database:
@@ -27,9 +27,12 @@ class Database:
                     runner TEXT NOT NULL, runner_url TEXT NOT NULL, status TEXT NOT NULL,
                     execution_id TEXT, prompt TEXT, result TEXT, log TEXT NOT NULL DEFAULT '',
                     output_truncated INTEGER NOT NULL DEFAULT 0, error TEXT,
-                    created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
+                    resets_at TEXT, created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
+            if "resets_at" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN resets_at TEXT")
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> None:
         with self._lock, self.connect() as db:
@@ -57,4 +60,3 @@ class Database:
         with self.connect() as db:
             rows = db.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
         return [dict(row) for row in rows]
-
