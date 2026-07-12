@@ -30,6 +30,10 @@ class ExecuteRequest(BaseModel):
         return value
 
 
+class ResumeRequest(ExecuteRequest):
+    session_id: str
+
+
 @dataclass
 class Execution:
     id: str
@@ -41,6 +45,8 @@ class Execution:
     error: str | None = None
     exit_code: int | None = None
     resets_at: str | None = None
+    session_id: str | None = None
+    quota_auto_resume: bool = False
     task: asyncio.Task[None] | None = field(default=None, repr=False)
 
 
@@ -116,6 +122,7 @@ _RESET_PHRASE_PATTERN = re.compile(r"try again in\s+([0-9]+h\s*[0-9]*m?|[0-9]+m)
 @dataclass
 class QuotaExhaustion:
     resets_at: str | None
+    structured: bool
 
 
 def _detect_quota_exhaustion(output: str) -> QuotaExhaustion | None:
@@ -152,12 +159,12 @@ def _detect_quota_exhaustion(output: str) -> QuotaExhaustion | None:
                     resets_at = candidate
 
     if quota_detected:
-        return QuotaExhaustion(resets_at=resets_at)
+        return QuotaExhaustion(resets_at=resets_at, structured=True)
 
     lowered = output.lower()
     if any(phrase in lowered for phrase in _QUOTA_PHRASES):
         match = _RESET_PHRASE_PATTERN.search(output)
-        return QuotaExhaustion(resets_at=match.group(1) if match else None)
+        return QuotaExhaustion(resets_at=match.group(1) if match else None, structured=False)
 
     return None
 
@@ -180,7 +187,6 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
     command = [
         "codex",
         "exec",
-        _runner_prompt(request),
         "--json",
         "--sandbox",
         "workspace-write",
@@ -190,7 +196,30 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
         "sandbox_workspace_write.network_access=true",
         "--config",
         "shell_environment_policy.inherit=all",
+        _runner_prompt(request),
     ]
+    await _run_command(execution, request, command)
+
+
+async def _run_resume(execution: Execution, request: ResumeRequest) -> None:
+    command = [
+        "codex",
+        "exec",
+        "resume",
+        "--json",
+        "--skip-git-repo-check",
+        request.session_id,
+        "Continue the interrupted task from where you stopped. Complete the original request.",
+    ]
+    await _run_command(execution, request, command, fallback_to_fresh=True)
+
+
+async def _run_command(
+    execution: Execution,
+    request: ExecuteRequest,
+    command: list[str],
+    fallback_to_fresh: bool = False,
+) -> None:
     try:
         execution.process = await asyncio.create_subprocess_exec(
             *command,
@@ -202,11 +231,19 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
         stdout, _ = await execution.process.communicate()
         execution.exit_code = execution.process.returncode
         execution.log = stdout.decode("utf-8", errors="replace")
+        execution.session_id = _session_id(execution.log)
+        if fallback_to_fresh and execution.exit_code != 0 and _detect_quota_exhaustion(execution.log) is None:
+            resume_log = execution.log
+            marker = "[RESUME FAILED: falling back to a fresh Codex dispatch]"
+            await _run(execution, request)
+            execution.log = f"{resume_log.rstrip()}\n{marker}\n{execution.log}"
+            return
         execution.result = _final_message(execution.log)
         quota = _detect_quota_exhaustion(execution.log)
         if quota is not None:
             execution.status = "quota_exceeded"
             execution.resets_at = quota.resets_at
+            execution.quota_auto_resume = quota.structured
             execution.error = "Codex usage limit reached." + (
                 f" Resets at {quota.resets_at}." if quota.resets_at else ""
             )
@@ -233,6 +270,17 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
         shutil.rmtree(execution.workspace, ignore_errors=True)
 
 
+def _session_id(output: str) -> str | None:
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "thread.started" and isinstance(event.get("thread_id"), str):
+            return event["thread_id"]
+    return None
+
+
 @app.get("/")
 def health() -> dict[str, str]:
     return {"service": "pacific-shift-codex-runner", "status": "ok"}
@@ -256,13 +304,20 @@ async def execute(request: ExecuteRequest) -> dict[str, str]:
     return {"execution_id": execution.id}
 
 
+@app.post("/resume", status_code=status.HTTP_202_ACCEPTED)
+async def resume(request: ResumeRequest) -> dict[str, str]:
+    execution = store.create()
+    execution.task = asyncio.create_task(_run_resume(execution, request))
+    return {"execution_id": execution.id}
+
+
 @app.get("/status/{execution_id}")
 def execution_status(execution_id: str) -> dict[str, str]:
     return {"status": store.get(execution_id).status}
 
 
 @app.get("/result/{execution_id}")
-def execution_result(execution_id: str) -> dict[str, str | int | None]:
+def execution_result(execution_id: str) -> dict[str, object]:
     execution = store.get(execution_id)
     return {
         "status": execution.status,
@@ -271,6 +326,8 @@ def execution_result(execution_id: str) -> dict[str, str | int | None]:
         "error": execution.error,
         "exit_code": execution.exit_code,
         "resets_at": execution.resets_at,
+        "session_id": execution.session_id,
+        "quota_auto_resume": execution.quota_auto_resume,
     }
 
 

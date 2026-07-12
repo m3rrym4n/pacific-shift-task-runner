@@ -27,12 +27,17 @@ class Database:
                     runner TEXT NOT NULL, runner_url TEXT NOT NULL, status TEXT NOT NULL,
                     execution_id TEXT, prompt TEXT, result TEXT, log TEXT NOT NULL DEFAULT '',
                     output_truncated INTEGER NOT NULL DEFAULT 0, error TEXT,
-                    resets_at TEXT, created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
+                    resets_at TEXT, session_id TEXT, quota_auto_resume INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
                 )
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
             if "resets_at" not in columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN resets_at TEXT")
+            if "session_id" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT")
+            if "quota_auto_resume" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN quota_auto_resume INTEGER NOT NULL DEFAULT 0")
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> None:
         with self._lock, self.connect() as db:

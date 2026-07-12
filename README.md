@@ -123,7 +123,7 @@ An example compose deployment is provided in `deploy/docker-compose.yml`.
 
 ## Runner contract
 
-Required endpoints are `POST /execute`, `GET /status/{execution_id}`, and `GET /result/{execution_id}`. On timeout the orchestrator also attempts `DELETE /execute/{execution_id}`. Runners should implement that optional endpoint to guarantee remote process termination; otherwise the task is still recorded as `timeout`, with the failed cancellation noted.
+Required endpoints are `POST /execute`, `POST /resume`, `GET /status/{execution_id}`, and `GET /result/{execution_id}`. `POST /resume` accepts the original execution request plus a persisted `session_id`; the Codex runner invokes `codex exec resume` and logs an explicit marker before falling back to a fresh dispatch if resume fails. On timeout the orchestrator also attempts `DELETE /execute/{execution_id}`. Runners should implement that optional endpoint to guarantee remote process termination; otherwise the task is still recorded as `timeout`, with the failed cancellation noted.
 
 ## Runner queues
 
@@ -133,10 +133,15 @@ selected runner and returns a receipt with `task_id`, `status`, `position`,
 position `0`; busy runners keep later tasks queued until earlier work finishes.
 If the active task for a runner fails, times out, or raises during processing,
 that runner's queue halts and leaves pending tasks queued for human inspection.
-If the runner instead reports `quota_exceeded` with an ISO 8601 `resets_at`
-timestamp, the queue enters a distinct quota halt. Receipts for work added during
-that halt include `resumes_at`, and processing resumes automatically at that
-time. Quota responses without a usable reset timestamp remain generic halts.
+If the runner instead reports `quota_exceeded` from a structured rate-limit
+event with a session ID and ISO 8601 `resets_at` timestamp, the interrupted task
+returns to the head of the queue and the queue enters a distinct quota halt.
+Receipts for work added during that halt include `resumes_at`. At that time the
+same task row resumes its Codex session before later pending work starts. Quota
+responses without a usable structured reset timestamp remain generic halts.
+Phrasing-only quota detections deliberately do not auto-resume: Codex's relative
+duration text is neither ISO-compatible nor sufficiently reliable to schedule
+unattended work.
 Queues are independent per runner and are not persisted across restarts.
 Use the `clear_runner_halt` tool to clear a halt for one runner and resume its
 remaining pending items without retrying the failed item. Use

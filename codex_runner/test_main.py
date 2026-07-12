@@ -85,6 +85,7 @@ def test_detect_quota_exhaustion_via_structured_rate_limits_event():
 
     assert quota is not None
     assert quota.resets_at == "2026-07-11T15:42:00-07:00"
+    assert quota.structured is True
 
 
 def test_detect_quota_exhaustion_via_phrasing_fallback_when_no_structured_event():
@@ -94,6 +95,16 @@ def test_detect_quota_exhaustion_via_phrasing_fallback_when_no_structured_event(
 
     assert quota is not None
     assert quota.resets_at == "3h 42m"
+    assert quota.structured is False
+
+
+def test_session_id_comes_from_real_thread_started_jsonl_shape():
+    output = '\n'.join([
+        '{"type":"thread.started","thread_id":"019f5439-3c97-73e0-9265-3c0ed42e9c63"}',
+        '{"type":"turn.started"}',
+    ])
+
+    assert main._session_id(output) == "019f5439-3c97-73e0-9265-3c0ed42e9c63"
 
 
 def test_detect_quota_exhaustion_returns_none_for_genuine_output():
@@ -106,6 +117,7 @@ def test_execute_lifecycle_reports_quota_exceeded_via_structured_event(monkeypat
     script = tmp_path / "codex"
     script.write_text(
         "#!/bin/sh\n"
+        "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"session-structured\"}'\n"
         "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"partial\"}}'\n"
         "printf '%s\\n' '{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"resets_at\":\"2026-07-11T15:42:00-07:00\"}}}'\n"
         "exit 1\n"
@@ -125,6 +137,8 @@ def test_execute_lifecycle_reports_quota_exceeded_via_structured_event(monkeypat
         result = client.get(f"/result/{execution_id}").json()
         assert result["status"] == "quota_exceeded"
         assert result["resets_at"] == "2026-07-11T15:42:00-07:00"
+        assert result["session_id"] == "session-structured"
+        assert result["quota_auto_resume"] is True
         assert "usage limit" in result["error"].lower()
 
 
@@ -150,6 +164,40 @@ def test_execute_lifecycle_reports_quota_exceeded_via_phrasing_fallback(monkeypa
         result = client.get(f"/result/{execution_id}").json()
         assert result["status"] == "quota_exceeded"
         assert result["resets_at"] == "3h 42m"
+        assert result["quota_auto_resume"] is False
+
+
+def test_resume_failure_logs_explicit_fallback_and_fresh_dispatch_succeeds(monkeypatch, tmp_path):
+    script = tmp_path / "codex"
+    script.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$2\" = \"resume\" ]; then\n"
+        "  printf '%s\\n' 'Session not found'\n"
+        "  exit 1\n"
+        "fi\n"
+        "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh-session\"}'\n"
+        "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"fresh result\"}}'\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{__import__('os').environ['PATH']}")
+    main.store = main.ExecutionStore(str(tmp_path))
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/resume",
+            json={"repo": "owner/repo", "issue_number": 3, "prompt": "do it", "session_id": "missing"},
+        )
+        execution_id = response.json()["execution_id"]
+        for _ in range(100):
+            if client.get(f"/status/{execution_id}").json()["status"] != "running":
+                break
+            asyncio.run(asyncio.sleep(0.01))
+
+        result = client.get(f"/result/{execution_id}").json()
+        assert result["status"] == "completed"
+        assert result["result"] == "fresh result"
+        assert result["session_id"] == "fresh-session"
+        assert "[RESUME FAILED: falling back to a fresh Codex dispatch]" in result["log"]
 
 
 def test_execute_lifecycle_genuine_failure_not_misclassified_as_quota(monkeypatch, tmp_path):
