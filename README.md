@@ -133,6 +133,10 @@ selected runner and returns a receipt with `task_id`, `status`, `position`,
 position `0`; busy runners keep later tasks queued until earlier work finishes.
 If the active task for a runner fails, times out, or raises during processing,
 that runner's queue halts and leaves pending tasks queued for human inspection.
+If the runner instead reports `quota_exceeded` with an ISO 8601 `resets_at`
+timestamp, the queue enters a distinct quota halt. Receipts for work added during
+that halt include `resumes_at`, and processing resumes automatically at that
+time. Quota responses without a usable reset timestamp remain generic halts.
 Queues are independent per runner and are not persisted across restarts.
 
 ## Docker

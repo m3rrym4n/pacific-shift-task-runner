@@ -4,7 +4,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from .config import OpsImageCheck, ScheduledTask, Settings
 from .database import Database
@@ -22,7 +22,8 @@ def utcnow() -> str:
 class RunnerQueue:
     pending: deque[str] = field(default_factory=deque)
     active_task_id: str | None = None
-    halted: bool = False
+    halt_state: Literal["halted", "quota_halted"] | None = None
+    resumes_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,20 +143,24 @@ class TaskService:
             queue_length = len(queue.pending) + (1 if queue.active_task_id else 0)
             position = queue_length - 1
             status = "queued"
-            if not queue.halted and not queue.active_task_id and queue.pending[0] == task_id:
+            if queue.halt_state is None and not queue.active_task_id and queue.pending[0] == task_id:
                 status = "running"
-            if not queue.halted and not self._queue_worker_running(runner_name):
+            if queue.halt_state is None and not self._queue_worker_running(runner_name):
                 job = asyncio.create_task(self._process_runner_queue(runner_name))
                 setattr(job, "_task_runner_runner_name", runner_name)
                 self._jobs.add(job)
                 job.add_done_callback(self._jobs.discard)
-        return {
+            resumes_at = queue.resumes_at if queue.halt_state == "quota_halted" else None
+        receipt = {
             "task_id": task_id,
             "status": status,
             "position": position,
             "queue_length": queue_length,
             "runner": runner_name,
         }
+        if resumes_at is not None:
+            receipt["resumes_at"] = resumes_at
+        return receipt
 
     def _queue_worker_running(self, runner_name: str) -> bool:
         return any(
@@ -167,7 +172,7 @@ class TaskService:
         while True:
             async with self._queue_lock:
                 queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                if queue.halted or queue.active_task_id or not queue.pending:
+                if queue.halt_state is not None or queue.active_task_id or not queue.pending:
                     return
                 task_id = queue.pending.popleft()
                 queue.active_task_id = task_id
@@ -175,6 +180,25 @@ class TaskService:
                 await self._dispatch_or_run_internal(task_id)
                 task = self.database.get(task_id) or {}
                 if task.get("status") != "completed":
+                    resets_at = task.get("resets_at")
+                    resume_time = self._parse_resume_time(resets_at) if resets_at else None
+                    if task.get("status") == "quota_exceeded" and resume_time is not None:
+                        self.logger.warning(
+                            "Runner queue '%s' quota-halted after task %s until %s",
+                            runner_name,
+                            task_id,
+                            resets_at,
+                        )
+                        async with self._queue_lock:
+                            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                            queue.halt_state = "quota_halted"
+                            queue.resumes_at = str(resets_at)
+                        resume_job = asyncio.create_task(
+                            self._resume_quota_halted_queue(runner_name, resume_time)
+                        )
+                        self._jobs.add(resume_job)
+                        resume_job.add_done_callback(self._jobs.discard)
+                        return
                     self.logger.error(
                         "Runner queue '%s' halted after task %s ended with status '%s': %s",
                         runner_name,
@@ -184,19 +208,45 @@ class TaskService:
                     )
                     async with self._queue_lock:
                         queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                        queue.halted = True
+                        queue.halt_state = "halted"
                     return
             except Exception:
                 self.logger.exception("Runner queue '%s' halted while processing task %s", runner_name, task_id)
                 async with self._queue_lock:
                     queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                    queue.halted = True
+                    queue.halt_state = "halted"
                 return
             finally:
                 async with self._queue_lock:
                     queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
                     if queue.active_task_id == task_id:
                         queue.active_task_id = None
+
+    @staticmethod
+    def _parse_resume_time(value: str) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed
+
+    async def _resume_quota_halted_queue(self, runner_name: str, resume_time: datetime) -> None:
+        delay = max(0.0, (resume_time.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds())
+        await asyncio.sleep(delay)
+        while True:
+            async with self._queue_lock:
+                queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                if queue.halt_state != "quota_halted":
+                    return
+                if queue.active_task_id is None:
+                    queue.halt_state = None
+                    queue.resumes_at = None
+                    break
+            await asyncio.sleep(0)
+        self.logger.info("Runner queue '%s' resumed after quota reset", runner_name)
+        await self._process_runner_queue(runner_name)
 
     async def _dispatch_or_run_internal(self, task_id: str) -> None:
         ops_job = self._internal_ops_jobs.get(task_id)
@@ -355,7 +405,7 @@ class TaskService:
     async def _record_terminal_if_available(self, task_id: str, url: str, execution_id: str) -> bool:
         status_data = await self.runner.status(url, execution_id)
         status = status_data.get("status")
-        if status not in {"completed", "failed", "timeout"}:
+        if status not in {"completed", "failed", "timeout", "quota_exceeded"}:
             return False
         result_data = await self.runner.result(url, execution_id)
         result = result_data.get("result") or result_data.get("report") or ""
@@ -363,7 +413,8 @@ class TaskService:
         capped_log, truncated = self._cap(str(log))
         self.database.update(
             task_id, status=status, result=str(result), log=capped_log,
-            output_truncated=int(truncated), error=result_data.get("error"), completed_at=utcnow(),
+            output_truncated=int(truncated), error=result_data.get("error"),
+            resets_at=result_data.get("resets_at"), completed_at=utcnow(),
         )
         return True
 
@@ -427,7 +478,13 @@ has a durable written reference in the normal task log/result model.
 
     def get_task_result(self, task_id: str) -> dict[str, Any]:
         task = self._required(task_id)
-        return {key: task[key] for key in ("id", "status", "result", "error", "output_truncated", "created_at", "completed_at")}
+        return {
+            key: task[key]
+            for key in (
+                "id", "status", "result", "error", "resets_at", "output_truncated",
+                "created_at", "completed_at",
+            )
+        }
 
     def get_task_log(self, task_id: str) -> dict[str, Any]:
         task = self._required(task_id)
@@ -467,7 +524,7 @@ has a durable written reference in the normal task log/result model.
         async with self._queue_lock:
             queue = self._runner_queues.setdefault(ops_check.runner, RunnerQueue())
             queue.pending.append(task_id)
-            if not queue.halted and not self._queue_worker_running(ops_check.runner):
+            if queue.halt_state is None and not self._queue_worker_running(ops_check.runner):
                 job = asyncio.create_task(self._process_runner_queue(ops_check.runner))
                 setattr(job, "_task_runner_runner_name", ops_check.runner)
                 self._jobs.add(job)
