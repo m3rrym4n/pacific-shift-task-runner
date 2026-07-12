@@ -138,6 +138,10 @@ timestamp, the queue enters a distinct quota halt. Receipts for work added durin
 that halt include `resumes_at`, and processing resumes automatically at that
 time. Quota responses without a usable reset timestamp remain generic halts.
 Queues are independent per runner and are not persisted across restarts.
+Use the `clear_runner_halt` tool to clear a halt for one runner and resume its
+remaining pending items without retrying the failed item. Use
+`cancel_queued_task` to remove and mark one still-pending item as `cancelled`;
+active tasks must instead use the runner shim's execution-cancellation endpoint.
 
 ## Docker
 

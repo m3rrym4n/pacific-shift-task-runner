@@ -168,6 +168,64 @@ class TaskService:
             for job in self._jobs
         )
 
+    async def clear_runner_halt(self, runner_name: str) -> dict[str, Any]:
+        if runner_name not in self.settings.runners:
+            available = ", ".join(sorted(self.settings.runners)) or "none"
+            raise ValueError(f"Unknown runner '{runner_name}'. Available runners: {available}")
+        async with self._queue_lock:
+            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+            previous_halt_state = queue.halt_state
+            if previous_halt_state is None:
+                return {
+                    "runner": runner_name,
+                    "status": "not_halted",
+                    "pending_count": len(queue.pending),
+                }
+            queue.halt_state = None
+            queue.resumes_at = None
+            if not queue.active_task_id and queue.pending and not self._queue_worker_running(runner_name):
+                job = asyncio.create_task(self._process_runner_queue(runner_name))
+                setattr(job, "_task_runner_runner_name", runner_name)
+                self._jobs.add(job)
+                job.add_done_callback(self._jobs.discard)
+            pending_count = len(queue.pending)
+        self.logger.info("Runner queue '%s' halt cleared manually", runner_name)
+        return {
+            "runner": runner_name,
+            "status": "resumed",
+            "previous_halt_state": previous_halt_state,
+            "pending_count": pending_count,
+        }
+
+    async def cancel_queued_task(self, task_id: str) -> dict[str, Any]:
+        task = self._required(task_id)
+        runner_name = task["runner"]
+        async with self._queue_lock:
+            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+            if queue.active_task_id == task_id:
+                raise ValueError(
+                    f"Task '{task_id}' is active and cannot be cancelled as a queued task"
+                )
+            try:
+                queue.pending.remove(task_id)
+            except ValueError:
+                raise ValueError(f"Task '{task_id}' is not pending in a runner queue") from None
+            pending_count = len(queue.pending)
+            self._internal_ops_jobs.pop(task_id, None)
+            self.database.update(
+                task_id,
+                status="cancelled",
+                error="Cancelled while queued before runner execution.",
+                completed_at=utcnow(),
+            )
+        self.logger.info("Cancelled queued task %s on runner '%s'", task_id, runner_name)
+        return {
+            "task_id": task_id,
+            "runner": runner_name,
+            "status": "cancelled",
+            "pending_count": pending_count,
+        }
+
     async def _process_runner_queue(self, runner_name: str) -> None:
         while True:
             async with self._queue_lock:

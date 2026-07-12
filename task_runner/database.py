@@ -5,7 +5,7 @@ from threading import Lock
 from typing import Any
 
 
-TERMINAL_STATES = {"completed", "failed", "timeout", "quota_exceeded"}
+TERMINAL_STATES = {"completed", "failed", "timeout", "quota_exceeded", "cancelled"}
 
 
 class Database:
