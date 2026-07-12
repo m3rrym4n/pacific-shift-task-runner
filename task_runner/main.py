@@ -36,6 +36,18 @@ async def run_task(repo: str, issue_number: int, runner: str) -> dict:
 
 
 @mcp.tool()
+async def clear_runner_halt(runner: str) -> dict:
+    """Clear one runner queue's halt and resume its remaining pending tasks."""
+    return await service.clear_runner_halt(runner)
+
+
+@mcp.tool()
+async def cancel_queued_task(task_id: str) -> dict:
+    """Cancel one task only if it has not started and is still queued."""
+    return await service.cancel_queued_task(task_id)
+
+
+@mcp.tool()
 def get_task_result(task_id: str) -> dict:
     """Return the current state and final structured result for a task."""
     return service.get_task_result(task_id)
