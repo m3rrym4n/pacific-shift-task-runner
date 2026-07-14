@@ -183,6 +183,21 @@ docker run --rm pacific-shift-task-runner:test
 
 Verified via automated end-to-end dispatch.
 
+## CI/CD
+
+The manually dispatched `.github/workflows/dev-build-deploy.yml` calls the
+reusable workflow in `pacific-shift-ci`. It builds through the shared BuildKit
+daemon, pushes immutable and rolling development tags to Zot, and replaces the
+existing `pacific-shift-task-runner` container through Dockhand. Deployment
+uses the running container's inspected configuration as its template and
+changes only the image. Generic running/image/HTTP verification and automatic
+rollback are supplied by the shared workflow.
+
+The repository requires a self-hosted runner labeled `zimaos` and
+`task-runner`, plus `DOCKHAND_URL` and `DOCKHAND_TOKEN` Actions secrets, before
+the workflow can be dispatched. Runner and token provisioning is managed
+separately from the reusable workflow.
+
 ### Dedicated Codex runner
 
 Build and run the non-interactive runner separately from any interactive Codex container. Its Codex authentication is stored in a named volume.

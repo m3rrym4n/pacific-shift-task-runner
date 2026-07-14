@@ -1,0 +1,23 @@
+name: Dev Build and Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: Force failure after replacement to verify rollback
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    uses: m3rrym4n/pacific-shift-ci/.github/workflows/build-deploy-verify.yml@main
+    with:
+      runner_labels: '["self-hosted", "zimaos", "task-runner"]'
+      image_repository: pacific-shift/task-runner
+      container_name: pacific-shift-task-runner
+      app_url: http://192.168.1.68:6002
+      health_path: /
+      build_args: |
+        TASK_RUNNER_SOURCE_SHA=${{ github.sha }}
+      simulate_failure: ${{ inputs.simulate_failure }}
+    secrets: inherit
