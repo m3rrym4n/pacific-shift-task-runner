@@ -1,0 +1,26 @@
+[
+  {
+    "repo": "m3rrym4n/cratespy",
+    "runner": "codex",
+    "dev": {"container": "cratespy-dev", "volume": "cratespy_cratespy-dev-data", "port": 8001},
+    "main": {"container": "cratespy", "volume": "cratespy_cratespy-data", "port": 8000, "human_promoted_only": true}
+  },
+  {
+    "repo": "m3rrym4n/pacific-shift-task-runner",
+    "runner": "codex",
+    "dev": {"container": "pacific-shift-task-runner-dev", "volume": "pacific-shift-task-runner-dev-data", "port": 6004},
+    "main": {"container": "pacific-shift-task-runner", "volume": "pacific-shift-task-runner-data", "port": 6002, "human_promoted_only": true}
+  },
+  {
+    "repo": "m3rrym4n/pacific-shift-publisher",
+    "runner": "codex",
+    "dev": {"container": "pacific-shift-publisher-dev", "volume": "pacific-shift-publisher-dev-data", "port": 5001},
+    "main": {"container": "pacific-shift-publisher", "volume": "pacific-shift-publisher-data", "port": 5000, "human_promoted_only": true}
+  },
+  {
+    "repo": "m3rrym4n/dockhand-mcp",
+    "runner": "codex",
+    "dev": {"container": "dockhand-mcp-dev", "volume": "dockhand-mcp-dev-data", "port": 7001},
+    "main": {"container": "dockhand-mcp", "volume": "dockhand-mcp-data", "port": 6003, "human_promoted_only": true}
+  }
+]

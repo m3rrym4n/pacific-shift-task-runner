@@ -2,11 +2,11 @@ import asyncio
 import logging
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from .config import OpsImageCheck, ScheduledTask, Settings
+from .config import OpsImageCheck, RepoConfig, ScheduledTask, Settings
 from .database import Database
 from .dockhand import ContainerDeployResult, DockhandClient
 from .github import GitHubClient
@@ -133,6 +133,11 @@ class TaskService:
         if runner_name not in self.settings.runners:
             available = ", ".join(sorted(self.settings.runners)) or "none"
             raise ValueError(f"Unknown runner '{runner_name}'. Available runners: {available}")
+        repo_config = self.get_repo_config(repo)
+        if runner_name != repo_config.runner:
+            raise ValueError(
+                f"Repo '{repo}' is configured for runner '{repo_config.runner}', not '{runner_name}'"
+            )
         if "/" not in repo or issue_number < 1:
             raise ValueError("repo must be owner/name and issue_number must be positive")
         task_id = str(uuid.uuid4())
@@ -161,6 +166,18 @@ class TaskService:
         if resumes_at is not None:
             receipt["resumes_at"] = resumes_at
         return receipt
+
+    def get_repo_config(self, repo: str) -> RepoConfig:
+        for repo_config in self.settings.repos:
+            if repo_config.repo == repo:
+                return repo_config
+        available = ", ".join(sorted(item.repo for item in self.settings.repos)) or "none"
+        raise ValueError(
+            f"Repo '{repo}' is not registered in TASK_RUNNER_REPOS. Registered repos: {available}"
+        )
+
+    def list_repo_configs(self) -> list[dict[str, Any]]:
+        return [asdict(repo) for repo in self.settings.repos]
 
     def _queue_worker_running(self, runner_name: str) -> bool:
         return any(

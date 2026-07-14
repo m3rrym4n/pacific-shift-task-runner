@@ -12,10 +12,10 @@ jobs:
   deploy:
     uses: m3rrym4n/pacific-shift-ci/.github/workflows/build-deploy-verify.yml@main
     with:
-      runner_labels: '["self-hosted", "zimaos", "task-runner"]'
+      runner_labels: '["self-hosted", "zimaos", "pacific-shift-task-runner"]'
       image_repository: pacific-shift/task-runner
-      container_name: pacific-shift-task-runner
-      app_url: http://192.168.1.68:6002
+      container_name: pacific-shift-task-runner-dev
+      app_url: http://192.168.1.68:6004
       health_path: /
       build_args: |
         TASK_RUNNER_SOURCE_SHA=${{ github.sha }}
