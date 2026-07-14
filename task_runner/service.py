@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from .config import OpsImageCheck, RepoConfig, ScheduledTask, Settings
 from .database import Database
-from .dockhand import ContainerDeployResult, DockhandClient
+from .dockhand import ContainerDeployResult, ContainerSnapshot, DockhandClient
 from .github import GitHubClient
 from .ops_images import codex_runner_tag
 from .runner import RunnerClient
@@ -369,6 +369,8 @@ class TaskService:
         check = job.check
         prompt = self.build_ops_rebuild_prompt(check, job.installed_version, job.target_version)
         log_parts: list[str] = []
+        snapshot: ContainerSnapshot | None = None
+        replacement_started = False
         self.database.update(task_id, status="running", prompt=prompt, started_at=utcnow())
         try:
             if self.dockhand is None:
@@ -424,7 +426,14 @@ class TaskService:
             if check.insecure_tls:
                 prune_command.append("--insecure-tls")
             log_parts.append(await self._run_command(prune_command))
-            deploy_result = await self.dockhand.deploy_container_swap(check.stop_container, check.start_container)
+            if check.stop_container != check.start_container:
+                raise RuntimeError("Ops Images replacement requires stop_container and start_container to match")
+            await self.dockhand.pull_image(image)
+            log_parts.append(f"Pulled rebuilt image on deploy host: {image}")
+            snapshot = await self.dockhand.snapshot_container(check.start_container)
+            log_parts.append(f"Captured rollback snapshot: container={snapshot.name}, image={snapshot.image}")
+            replacement_started = True
+            deploy_result = await self.dockhand.replace_from_snapshot(snapshot, image)
             log_parts.append(
                 "Deploy verified: "
                 f"stopped={deploy_result.stopped_container}, started={deploy_result.started_container}, "
@@ -446,6 +455,23 @@ class TaskService:
                 completed_at=utcnow(),
             )
         except Exception as exc:
+            rollback_error: Exception | None = None
+            if replacement_started and snapshot is not None and self.dockhand is not None:
+                log_parts.append(f"Deployment failed: {type(exc).__name__}: {exc}")
+                log_parts.append(f"Rollback started: restoring {snapshot.name} on {snapshot.image}")
+                try:
+                    restored = await self.dockhand.restore_snapshot(snapshot)
+                    log_parts.append(
+                        "Rollback verified from actual container state: "
+                        f"container={snapshot.name}, running={restored.running}, "
+                        f"status={restored.status}, health={restored.health_status}, image={snapshot.image}"
+                    )
+                except Exception as restore_exc:
+                    rollback_error = restore_exc
+                    log_parts.append(
+                        "ALERT: rollback failed; manual recovery required: "
+                        f"{type(restore_exc).__name__}: {restore_exc}"
+                    )
             log = "\n\n".join(log_parts)
             capped_log, truncated = self._cap(log)
             self.database.update(
@@ -453,7 +479,12 @@ class TaskService:
                 status="failed",
                 log=capped_log,
                 output_truncated=int(truncated),
-                error=f"{type(exc).__name__}: {exc}",
+                error=(
+                    f"{type(exc).__name__}: {exc}"
+                    if rollback_error is None
+                    else f"{type(exc).__name__}: {exc}; rollback failed: "
+                    f"{type(rollback_error).__name__}: {rollback_error}"
+                ),
                 completed_at=utcnow(),
             )
         finally:

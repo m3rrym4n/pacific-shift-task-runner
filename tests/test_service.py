@@ -13,6 +13,7 @@ from task_runner.config import (
 )
 from task_runner.database import Database
 from task_runner.service import TaskService
+from task_runner.dockhand import ContainerSnapshot, ContainerState
 
 
 class FakeGitHub:
@@ -31,6 +32,13 @@ class FakeDockhand:
         self.volume_present = volume_present
         self.volume_checks = []
         self.deploys = []
+        self.pulls = []
+        self.restores = []
+        self.snapshot = ContainerSnapshot(
+            "codex-runner",
+            "zot.lan:5000/codex-runner:old",
+            {"Config": {"Image": "zot.lan:5000/codex-runner:old"}, "State": {"Running": True}},
+        )
 
     async def container_uses_volume(self, container, volume_name):
         self.volume_checks.append((container, volume_name))
@@ -48,6 +56,34 @@ class FakeDockhand:
                 "health_status": "healthy",
             },
         )()
+
+    async def pull_image(self, image):
+        self.pulls.append(image)
+
+    async def snapshot_container(self, container):
+        return self.snapshot
+
+    async def replace_from_snapshot(self, snapshot, image):
+        self.deploys.append((snapshot.name, snapshot.name))
+        return type(
+            "ContainerDeployResult",
+            (),
+            {"stopped_container": snapshot.name, "started_container": snapshot.name,
+             "status": "running", "health_status": "healthy"},
+        )()
+
+    async def restore_snapshot(self, snapshot):
+        self.restores.append(snapshot)
+        return ContainerState(
+            snapshot.name, "running", True, "healthy",
+            {"Config": {"Image": snapshot.image}, "State": {"Running": True}},
+        )
+
+
+class FailingDeployDockhand(FakeDockhand):
+    async def replace_from_snapshot(self, snapshot, image):
+        self.deploys.append((snapshot.name, snapshot.name))
+        raise RuntimeError("forced start failure")
 
 
 class FakeRunner:
@@ -671,10 +707,70 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[0]
     assert commands[1][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
     assert dockhand.deploys == [("codex-runner", "codex-runner")]
+    assert dockhand.pulls == ["zot.lan:5000/codex-runner:0.144.1-abc1234"]
     assert dockhand.volume_checks == [
         ("codex-runner", "pacific-shift-codex-runner-auth"),
         ("codex-runner", "pacific-shift-codex-runner-auth"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_image_forced_deploy_failure_restores_snapshot_and_logs_outcome(tmp_path):
+    runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
+    dockhand = FailingDeployDockhand()
+    service = make_service(tmp_path, runner, dockhand=dockhand)
+    service._run_command = lambda command: _async_value("ok")
+    check = OpsImageCheck(
+        "codex", "codex", "owner/repo", 54, "zot.lan:5000", "codex-runner",
+        "codex-runner", "codex-runner", "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock", "abc1234", 2, False, 86400,
+    )
+
+    assert await service.check_ops_image(check) is True
+    await asyncio.gather(*service._jobs)
+
+    task = service.get_task_result(service.list_tasks()[0]["id"])
+    log = service.get_task_log(task["id"])["log"]
+    assert task["status"] == "failed"
+    assert task["error"] == "RuntimeError: forced start failure"
+    assert dockhand.restores == [dockhand.snapshot]
+    assert "Rollback started" in log
+    assert "Rollback verified from actual container state" in log
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_call", [1, 2], ids=["build", "prune"])
+async def test_ops_image_pre_deploy_failures_leave_container_untouched(tmp_path, failure_call):
+    runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
+    dockhand = FakeDockhand()
+    service = make_service(tmp_path, runner, dockhand=dockhand)
+    calls = 0
+
+    async def fail_at_selected_command(command):
+        nonlocal calls
+        calls += 1
+        if calls == failure_call:
+            raise RuntimeError("forced pre-deploy failure")
+        return "ok"
+
+    service._run_command = fail_at_selected_command
+    check = OpsImageCheck(
+        "codex", "codex", "owner/repo", 54, "zot.lan:5000", "codex-runner",
+        "codex-runner", "codex-runner", "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock", "abc1234", 2, False, 86400,
+    )
+
+    assert await service.check_ops_image(check) is True
+    await asyncio.gather(*service._jobs)
+
+    assert service.list_tasks()[0]["status"] == "failed"
+    assert dockhand.pulls == []
+    assert dockhand.deploys == []
+    assert dockhand.restores == []
+
+
+async def _async_value(value):
+    return value
 
 
 @pytest.mark.asyncio

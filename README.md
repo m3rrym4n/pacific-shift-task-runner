@@ -126,9 +126,15 @@ internal rebuild job behind any active `codex` work. The job invokes `buildctl`
 through the mounted BuildKit socket, builds `codex_runner` with
 `CODEX_VERSION=<target>`, tags the image as
 `<registry>/<repository>:<codex-version>-<repo-short-sha>`, pushes it to Zot,
-runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, calls
-Dockhand's `deploy_container_swap`, and verifies that
+runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, snapshots the
+running container, and replaces it through Dockhand using that inspected
+configuration with the newly built image reference. It independently verifies
+the replacement's running state and image, then verifies that
 `pacific-shift-codex-runner-auth` is still mounted after the swap.
+If replacement or post-deploy volume verification fails, the job recreates the
+previous image and configuration from the snapshot and independently verifies
+that the restored container is running. This recreate step is required: merely
+stopping and starting the existing container cannot change its image reference.
 
 The Task Runner container must mount the host BuildKit socket directory at the
 same in-container path used by the CrateSpy runner:
