@@ -9,6 +9,7 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 | `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://192.168.1.68:7000"}` |
 | `TASK_RUNNER_SCHEDULED_TASKS` | `[]` | JSON array of scheduled issue dispatches |
 | `TASK_RUNNER_OPS_IMAGE_CHECKS` | `[]` | JSON array of scheduled operational image version-drift checks and rebuild jobs |
+| `TASK_RUNNER_REPOS` | `[]` | JSON array of onboarded repository and dev/main deploy-target objects |
 | `TASK_RUNNER_DATABASE` | `/data/tasks.db` | SQLite database path |
 | `TASK_RUNNER_TIMEOUT_SECONDS` | `600` | Hard orchestration timeout |
 | `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
@@ -22,6 +23,30 @@ FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured
 | `TASK_RUNNER_SOURCE_SHA` | `unknown` | Source revision baked into the Task Runner image and used in Ops Images tags |
 
 The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
+
+### Repository registry
+
+Every dispatched repository must appear in `TASK_RUNNER_REPOS`. Each entry
+selects one configured runner and records both its automatically deployed `dev`
+target and human-promoted `main` target. Targets require `container`, `volume`,
+and a positive integer `port`. Optional `health_path` and `expected_content`
+values override the reusable workflow's generic HTTP check. `health_path`
+defaults to `/` in that workflow when omitted.
+
+The live four-repository configuration is maintained in
+[`deploy/repos.json`](deploy/repos.json). Set the environment variable from the
+file when starting the service, for example:
+
+```bash
+TASK_RUNNER_REPOS="$(tr -d '\n' < deploy/repos.json)"
+export TASK_RUNNER_REPOS
+```
+
+`GET /api/repos` exposes the parsed, validated values to internal pipeline and
+dashboard consumers. Dispatch rejects missing repositories and runner
+mismatches before creating a task row. `pacific-shift-mcp-proxy` is deliberately
+absent because its Home Assistant add-on deployment does not use this container
+target model.
 
 Dockhand configuration is an internal Task Runner capability for Ops Images
 deploy steps. It is not exposed as an MCP tool. The token must be supplied at
@@ -168,6 +193,7 @@ docker run -d \
   -e 'TASK_RUNNER_RUNNERS={"codex":"http://192.168.1.68:7000"}' \
   -e 'TASK_RUNNER_SCHEDULED_TASKS=[]' \
   -e 'TASK_RUNNER_OPS_IMAGE_CHECKS=[]' \
+  -e "TASK_RUNNER_REPOS=$(tr -d '\n' < deploy/repos.json)" \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-task-runner:latest
 ```
@@ -194,7 +220,7 @@ changes only the image. Generic running/image/HTTP verification and automatic
 rollback are supplied by the shared workflow.
 
 The repository requires a self-hosted runner labeled `zimaos` and
-`task-runner`, plus `DOCKHAND_URL` and `DOCKHAND_TOKEN` Actions secrets, before
+`pacific-shift-task-runner`, plus `DOCKHAND_URL` and `DOCKHAND_TOKEN` Actions secrets, before
 the workflow can be dispatched. Runner and token provisioning is managed
 separately from the reusable workflow.
 

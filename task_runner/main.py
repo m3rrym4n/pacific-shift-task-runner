@@ -103,4 +103,9 @@ async def api_queues() -> dict:
     return await service.get_queue_states()
 
 
+@app.get("/api/repos")
+def api_repos() -> dict:
+    return {"repos": service.list_repo_configs()}
+
+
 app.mount("/mcp", mcp_app)

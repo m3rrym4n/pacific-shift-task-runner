@@ -70,6 +70,14 @@ def test_health_and_mcp_routes_remain_available(tmp_path, monkeypatch):
     assert any(getattr(route, "path", None) == "/mcp" for route in main.app.routes)
 
 
+def test_repo_registry_endpoint_returns_deploy_targets(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "service", make_service(tmp_path, FakeRunner()))
+    response = TestClient(main.app).get("/api/repos")
+    assert response.status_code == 200
+    assert response.json()["repos"][0]["repo"] == "owner/repo"
+    assert response.json()["repos"][0]["dev"]["container"] == "app-dev"
+
+
 async def wait_for_halt(service):
     for _ in range(100):
         queue = service._runner_queues["codex"]

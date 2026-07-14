@@ -3,7 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from task_runner.config import OpsImageCheck, ScheduledTask, Settings, parse_interval_seconds
+from task_runner.config import (
+    DeployTarget,
+    OpsImageCheck,
+    RepoConfig,
+    ScheduledTask,
+    Settings,
+    parse_interval_seconds,
+)
 from task_runner.database import Database
 from task_runner.service import TaskService
 
@@ -177,7 +184,18 @@ class QuotaThenSuccessRunner:
 
 
 def make_service(tmp_path, runner, dockhand=None, **overrides):
-    values = dict(database_path=str(tmp_path / "tasks.db"), runners={"codex": "http://runner"}, poll_interval_seconds=0)
+    target = DeployTarget("app-dev", "app-dev-data", 8001)
+    values = dict(
+        database_path=str(tmp_path / "tasks.db"),
+        runners={"codex": "http://runner"},
+        repos=[
+            RepoConfig("owner/repo", "codex", target, DeployTarget("app", "app-data", 8000)),
+            RepoConfig(
+                "owner/gemini", "gemini", target, DeployTarget("gemini", "gemini-data", 8002)
+            ),
+        ],
+        poll_interval_seconds=0,
+    )
     values.update(overrides)
     settings = Settings(**values)
     database = Database(settings.database_path)
@@ -214,6 +232,38 @@ def test_settings_reads_dockhand_configuration(monkeypatch):
     assert settings.dockhand_env == 2
     assert settings.dockhand_verify_timeout_seconds == 45
     assert settings.dockhand_verify_interval_seconds == 3
+
+
+def test_settings_reads_repo_registry(monkeypatch):
+    monkeypatch.setenv(
+        "TASK_RUNNER_REPOS",
+        '[{"repo":"owner/repo","runner":"codex","dev":{"container":"app-dev","volume":"app-dev-data","port":8001,"health_path":"/health","expected_content":"ok"},"main":{"container":"app","volume":"app-data","port":8000,"human_promoted_only":true}}]',
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.repos == [
+        RepoConfig(
+            "owner/repo",
+            "codex",
+            DeployTarget("app-dev", "app-dev-data", 8001, "/health", "ok"),
+            DeployTarget("app", "app-data", 8000, human_promoted_only=True),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ('{}', "JSON array"),
+        ('[{"repo":"owner/repo","runner":"codex","dev":{},"main":{}}]', "dev container"),
+        ('[{"repo":"owner/repo","runner":"codex","dev":{"container":"dev","volume":"data","port":0},"main":{"container":"main","volume":"data","port":1}}]', "positive integer"),
+    ],
+)
+def test_settings_rejects_malformed_repo_registry(monkeypatch, value, message):
+    monkeypatch.setenv("TASK_RUNNER_REPOS", value)
+    with pytest.raises(ValueError, match=message):
+        Settings.from_env()
 
 
 def test_settings_reads_ops_image_checks(monkeypatch):
@@ -320,6 +370,26 @@ async def test_unknown_runner_is_rejected_without_persistence(tmp_path):
     service = make_service(tmp_path, FakeRunner())
     with pytest.raises(ValueError, match="Unknown runner"):
         await service.run_task("owner/repo", 2, "claude")
+    assert service.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_unregistered_repo_is_rejected_without_persistence(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    with pytest.raises(ValueError, match="not registered in TASK_RUNNER_REPOS"):
+        await service.run_task("owner/missing", 2, "codex")
+    assert service.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_repo_runner_mismatch_is_rejected_without_persistence(tmp_path):
+    service = make_service(
+        tmp_path,
+        FakeRunner(),
+        runners={"codex": "http://runner", "gemini": "http://gemini"},
+    )
+    with pytest.raises(ValueError, match="configured for runner 'codex'"):
+        await service.run_task("owner/repo", 2, "gemini")
     assert service.list_tasks() == []
 
 
@@ -476,7 +546,7 @@ async def test_halted_runner_queue_does_not_block_other_runner(tmp_path, caplog)
 
     failed = await service.run_task("owner/repo", 2, "codex")
     stuck = await service.run_task("owner/repo", 3, "codex")
-    other = await service.run_task("owner/repo", 4, "gemini")
+    other = await service.run_task("owner/gemini", 4, "gemini")
     await asyncio.gather(*service._jobs)
 
     assert service.get_task_result(failed["task_id"])["status"] == "failed"
@@ -500,8 +570,8 @@ async def test_clear_halt_resumes_only_selected_runner_without_retrying_failed_i
 
     codex_failed = await service.run_task("owner/repo", 2, "codex")
     codex_pending = await service.run_task("owner/repo", 3, "codex")
-    gemini_failed = await service.run_task("owner/repo", 4, "gemini")
-    gemini_pending = await service.run_task("owner/repo", 5, "gemini")
+    gemini_failed = await service.run_task("owner/gemini", 4, "gemini")
+    gemini_pending = await service.run_task("owner/gemini", 5, "gemini")
     await asyncio.gather(*service._jobs)
 
     receipt = await service.clear_runner_halt("codex")

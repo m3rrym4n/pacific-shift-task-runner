@@ -4,6 +4,65 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def _non_empty_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty string")
+    return value.strip()
+
+
+@dataclass(frozen=True)
+class DeployTarget:
+    container: str
+    volume: str
+    port: int
+    health_path: str | None = None
+    expected_content: str | None = None
+    human_promoted_only: bool = False
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any], target_name: str) -> "DeployTarget":
+        if not isinstance(value, dict):
+            raise ValueError(f"repo {target_name} target must be an object")
+        container = _non_empty_string(value.get("container"), f"repo {target_name} container")
+        volume = _non_empty_string(value.get("volume"), f"repo {target_name} volume")
+        port = value.get("port")
+        if not isinstance(port, int) or isinstance(port, bool) or port < 1:
+            raise ValueError(f"repo {target_name} port must be a positive integer")
+        health_path = value.get("health_path")
+        if health_path is not None:
+            health_path = _non_empty_string(health_path, f"repo {target_name} health_path")
+            if not health_path.startswith("/"):
+                raise ValueError(f"repo {target_name} health_path must start with /")
+        expected_content = value.get("expected_content")
+        if expected_content is not None:
+            expected_content = _non_empty_string(
+                expected_content, f"repo {target_name} expected_content"
+            )
+        human_promoted_only = value.get("human_promoted_only", False)
+        if not isinstance(human_promoted_only, bool):
+            raise ValueError(f"repo {target_name} human_promoted_only must be a boolean")
+        return cls(container, volume, port, health_path, expected_content, human_promoted_only)
+
+
+@dataclass(frozen=True)
+class RepoConfig:
+    repo: str
+    runner: str
+    dev: DeployTarget
+    main: DeployTarget
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "RepoConfig":
+        repo = _non_empty_string(value.get("repo"), "repo config repo")
+        parts = repo.split("/")
+        if len(parts) != 2 or not all(part.strip() == part and part for part in parts):
+            raise ValueError("repo config repo must be owner/name")
+        runner = _non_empty_string(value.get("runner"), "repo config runner")
+        dev = DeployTarget.from_dict(value.get("dev"), "dev")
+        main = DeployTarget.from_dict(value.get("main"), "main")
+        return cls(repo, runner, dev, main)
+
+
 def parse_interval_seconds(value: Any) -> float:
     if isinstance(value, int | float) and not isinstance(value, bool):
         interval = float(value)
@@ -137,6 +196,7 @@ class Settings:
     runners: dict[str, str] = None  # type: ignore[assignment]
     scheduled_tasks: list[ScheduledTask] = None  # type: ignore[assignment]
     ops_image_checks: list[OpsImageCheck] = None  # type: ignore[assignment]
+    repos: list[RepoConfig] = None  # type: ignore[assignment]
     timeout_seconds: float = 600
     output_cap_bytes: int = 1_000_000
     poll_interval_seconds: float = 2
@@ -151,6 +211,10 @@ class Settings:
         object.__setattr__(self, "runners", self.runners or {})
         object.__setattr__(self, "scheduled_tasks", self.scheduled_tasks or [])
         object.__setattr__(self, "ops_image_checks", self.ops_image_checks or [])
+        object.__setattr__(self, "repos", self.repos or [])
+        repo_names = [repo.repo for repo in self.repos]
+        if len(repo_names) != len(set(repo_names)):
+            raise ValueError("TASK_RUNNER_REPOS must not contain duplicate repos")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -172,6 +236,12 @@ class Settings:
             isinstance(value, dict) for value in ops_image_check_values
         ):
             raise ValueError("TASK_RUNNER_OPS_IMAGE_CHECKS must be a JSON array of ops image check objects")
+        raw_repos = os.getenv("TASK_RUNNER_REPOS", "[]")
+        repo_values = json.loads(raw_repos)
+        if not isinstance(repo_values, list) or not all(
+            isinstance(value, dict) for value in repo_values
+        ):
+            raise ValueError("TASK_RUNNER_REPOS must be a JSON array of repo config objects")
         raw_dockhand_env = os.getenv("TASK_RUNNER_DOCKHAND_ENV")
         dockhand_env = int(raw_dockhand_env) if raw_dockhand_env else None
         return cls(
@@ -179,6 +249,7 @@ class Settings:
             runners=runners,
             scheduled_tasks=[ScheduledTask.from_dict(value) for value in scheduled_task_values],
             ops_image_checks=[OpsImageCheck.from_dict(value) for value in ops_image_check_values],
+            repos=[RepoConfig.from_dict(value) for value in repo_values],
             timeout_seconds=float(os.getenv("TASK_RUNNER_TIMEOUT_SECONDS", "600")),
             output_cap_bytes=int(os.getenv("TASK_RUNNER_OUTPUT_CAP_BYTES", "1000000")),
             poll_interval_seconds=float(os.getenv("TASK_RUNNER_POLL_INTERVAL_SECONDS", "2")),
