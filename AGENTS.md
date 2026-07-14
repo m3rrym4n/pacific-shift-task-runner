@@ -53,8 +53,9 @@ Runtime:
 - Docker
 
 Deployment:
-- Containers: `pacific-shift-task-runner` (orchestrator), `codex-runner` (separate container)
-- Orchestrator port: 6002 (per Pacific Shift MCP Proxy port map)
+- Branches: `dev` (auto-deployed, see CI/CD below), `main` (human-promoted only)
+- Containers: `pacific-shift-task-runner-dev` (dev, port 6004), `pacific-shift-task-runner` (production/main, port 6002), `codex-runner` (separate container, not part of this branch model — see CRITICAL section below)
+- Orchestrator port: 6002 production / 6004 dev (per Pacific Shift MCP Proxy port map)
 - Host: ZimaOS (192.168.1.68)
 
 Primary integrations:
@@ -69,7 +70,7 @@ Primary integrations:
 
 **You (Codex) are running *inside* the `codex-runner` container while executing any dispatched task.** Stopping, removing, or restarting `codex-runner` — for any reason, including "deployment verification," including if a task's own changes happen to touch files under `codex_runner/` — terminates your own process before it can report success. This is true even if the task's stated scope has nothing to do with deployment at all.
 
-**The "Deployment Pattern" section below applies to `pacific-shift-task-runner` (the orchestrator) only. It does NOT apply to `codex-runner`, ever, under any circumstances, regardless of what a specific GitHub issue asks for.**
+**`codex-runner` is not part of the dev/main deploy pipeline described below, and is never deployed automatically by anything.** It does NOT apply here, ever, under any circumstances, regardless of what a specific GitHub issue asks for.
 
 If a task changes code under `codex_runner/`:
 - Build and push a new image to Zot if the issue's scope calls for it.
@@ -81,34 +82,17 @@ If you are uncertain whether a planned action would stop or restart `codex-runne
 
 ---
 
-## Deployment Pattern
+## CI/CD — dev is fully automated, do not deploy `pacific-shift-task-runner`/`-dev` manually
 
-**Applies to `pacific-shift-task-runner` (the orchestrator) only — see the CRITICAL section above for `codex-runner`.**
+Deployment to `pacific-shift-task-runner-dev` is handled entirely by an automated pipeline, not by you. Once your PR is reviewed and merged into `dev` by a human (see Constraints below — you never merge your own PR), the push itself triggers `.github/workflows/dev-build-deploy.yml`: build via the self-hosted GitHub Actions runner and BuildKit → push to the local Zot registry → deploy `pacific-shift-task-runner-dev` through Dockhand's REST API (the shared `pacific-shift-ci` reusable workflow) → verify → automatic rollback to the previous working container if verification fails.
 
-After all validation passes, rebuild and restart the live production container:
+**Do not run `docker build`, `docker stop`, `docker rm`, or `docker run` against `pacific-shift-task-runner-dev` yourself, and do not use the Docker socket to redeploy it.** The pipeline already does this. Your job for `dev` ends at a clean, tested, merged PR.
 
-```bash
-docker build -t pacific-shift-task-runner:latest .
+Before merging, you may still build the image locally to confirm it builds cleanly and run the test suite inside Docker (see Before Making Changes below) — that verification is still yours. What changed is *deploying* the result: that step now belongs entirely to the pipeline.
 
-docker stop pacific-shift-task-runner
-docker rm pacific-shift-task-runner
+If the automated pipeline appears unavailable (e.g. the GitHub Actions run doesn't start, or fails for infrastructure reasons unrelated to your change), do not fall back to a manual Docker-socket deploy of `pacific-shift-task-runner-dev`. Report this in your final summary instead and stop — a human needs to look at the pipeline itself, not have it silently bypassed.
 
-docker run -d \
-  --name pacific-shift-task-runner \
-  --restart unless-stopped \
-  -p 6002:6002 \
-  -v pacific-shift-task-runner-data:/data \
-  pacific-shift-task-runner:latest
-```
-
-Verify startup:
-
-```bash
-docker logs pacific-shift-task-runner --tail 20
-curl http://localhost:6002/
-```
-
-`codex-runner` is built the same way when its own source changes, but is **never** stopped, removed, or restarted as part of a dispatched task — see the CRITICAL section above. It includes the Docker CLI and Buildx plugin and mounts the host Docker socket, with the socket's group added to the non-root `codex` user at container startup. Dispatched Codex tasks can therefore build, replace, start, and inspect *other* containers through the host Docker daemon; no Docker daemon runs inside `codex-runner` itself.
+**Production `pacific-shift-task-runner` (on `main`) remains entirely manual, human-promoted only.** There is no automated pipeline for `main`. Never deploy `main` yourself under any circumstances — see Constraints below.
 
 ---
 
@@ -151,13 +135,12 @@ GitHub issues are authoritative. If there is a conflict between prompt instructi
 4. Review the relevant GitHub issue — description, acceptance criteria, labels, comments, and any parent/sub-issue links.
 5. Inspect existing implementation before writing any code.
 6. Implement the smallest safe change that satisfies the issue.
-7. Run tests inside Docker.
-8. Rebuild and redeploy using the deployment pattern above — `pacific-shift-task-runner` only, never `codex-runner`.
-9. Verify startup and core functionality.
-10. Commit using the issue reference format: `#NNN Short description`.
-11. Create a branch if not already on one (`work/issue-NNN`), push it to origin, and open a pull request against `main` referencing the issue number.
-12. Do not merge the PR. Include the Final Reporting Standard content (completed work, test results, skipped work, known limitations, deployment verification, readiness statement) in the PR description, not just in chat/terminal output.
-13. Never commit or push directly to `main`. Every change lands via a reviewed PR, even for solo/manual dispatch runs.
+7. Run tests inside Docker, and confirm the image still builds cleanly.
+8. Commit using the issue reference format: `#NNN Short description`.
+9. Create a branch if not already on one (`work/issue-NNN`), push it to origin, and open a pull request against **`dev`** (not `main`) referencing the issue number.
+10. Do not merge the PR. Include the Final Reporting Standard content (completed work, test results, skipped work, known limitations, deployment verification, readiness statement) in the PR description, not just in chat/terminal output. Do not deploy `pacific-shift-task-runner-dev` yourself — the merge itself, once a human approves it, is what triggers the automated pipeline. See CI/CD above.
+11. If the automated pipeline is unavailable for infrastructure reasons, report this in your final summary and stop — do not fall back to a manual Docker-socket deploy.
+12. Never commit or push directly to `dev` or `main`. Every change lands via a reviewed PR, even for solo/manual dispatch runs.
 
 ---
 
@@ -173,8 +156,10 @@ Do not:
 - Skip tests.
 - Skip deployment verification.
 - Batch unrelated issues together.
-- Commit or push directly to `main`.
+- Commit or push directly to `dev` or `main`.
 - Merge your own PR.
+- Manually deploy, stop, remove, or recreate `pacific-shift-task-runner-dev` for any reason — this is fully automated; see CI/CD above.
+- Deploy production `pacific-shift-task-runner` (`main`) under any circumstances — human-only, entirely manual.
 - **Stop, remove, or restart the `codex-runner` container from within a dispatched task, for any reason — see the CRITICAL section above.**
 
 Prefer:
