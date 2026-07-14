@@ -157,7 +157,7 @@ Required endpoints are `POST /execute`, `POST /resume`, `GET /status/{execution_
 
 ## Runner queues
 
-`run_task` places every issue dispatch into an in-memory FIFO queue for the
+`run_task` places every issue dispatch into a SQLite-backed FIFO queue for the
 selected runner and returns a receipt with `task_id`, `status`, `position`,
 `queue_length`, and `runner`. Idle runners start the new task immediately with
 position `0`; busy runners keep later tasks queued until earlier work finishes.
@@ -172,7 +172,12 @@ responses without a usable structured reset timestamp remain generic halts.
 Phrasing-only quota detections deliberately do not auto-resume: Codex's relative
 duration text is neither ISO-compatible nor sufficiently reliable to schedule
 unattended work.
-Queues are independent per runner and are not persisted across restarts.
+Queues are independent per runner and survive orchestrator restarts, including
+pending order, halt details, quota resume time, and the active task reference.
+At startup an active task with a runner execution ID resumes monitoring that
+same remote execution. If no execution ID was persisted, its remote state is
+unknowable: the task is marked failed and the queue halts for operator review,
+preventing a potentially duplicate dispatch. This is reconciliation, not retry.
 Use the `clear_runner_halt` tool to clear a halt for one runner and resume its
 remaining pending items without retrying the failed item. Use
 `cancel_queued_task` to remove and mark one still-pending item as `cancelled`;

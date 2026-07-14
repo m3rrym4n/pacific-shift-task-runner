@@ -23,6 +23,7 @@ class RunnerQueue:
     pending: deque[str] = field(default_factory=deque)
     active_task_id: str | None = None
     halt_state: Literal["halted", "quota_halted"] | None = None
+    halt_reason: str | None = None
     resumes_at: str | None = None
 
 
@@ -81,18 +82,77 @@ class TaskService:
             )
 
     def resume_running_tasks(self) -> None:
-        for task in self.database.list():
-            if task["status"] != "running" or not task.get("execution_id"):
+        persisted = self.database.load_runner_queues()
+        for runner_name, state in persisted.items():
+            if runner_name not in self.settings.runners:
+                self.logger.warning("Ignoring persisted queue for unconfigured runner '%s'", runner_name)
                 continue
-            if any(not job.done() and getattr(job, "_task_runner_task_id", None) == task["id"] for job in self._jobs):
-                continue
-            job = asyncio.create_task(
-                self._resume_monitor(task["id"], task["runner_url"], task["execution_id"])
+            self._runner_queues[runner_name] = RunnerQueue(
+                pending=deque(state["pending"]),
+                active_task_id=state["active_task_id"],
+                halt_state=state["halt_state"],
+                halt_reason=state["halt_reason"],
+                resumes_at=state["resumes_at"],
             )
-            setattr(job, "_task_runner_task_id", task["id"])
-            self._jobs.add(job)
-            job.add_done_callback(self._jobs.discard)
-            self.logger.info("Resumed monitoring task %s with execution %s", task["id"], task["execution_id"])
+        represented = {
+            task_id
+            for queue in self._runner_queues.values()
+            for task_id in ([queue.active_task_id] if queue.active_task_id else [])
+        }
+        # Backward compatibility for databases created before queue persistence:
+        # preserve the previous behavior of reconciling remote running executions.
+        for task in self.database.list():
+            if task["status"] == "running" and task.get("execution_id") and task["id"] not in represented:
+                queue = self._runner_queues.setdefault(task["runner"], RunnerQueue())
+                if queue.active_task_id is None:
+                    queue.active_task_id = task["id"]
+                    self._persist_queue(task["runner"], queue)
+        for runner_name, queue in self._runner_queues.items():
+            if queue.active_task_id:
+                job = asyncio.create_task(self._reconcile_active_task(runner_name, queue.active_task_id))
+                self._register_queue_job(job, runner_name)
+            elif queue.halt_state == "quota_halted" and queue.resumes_at:
+                resume_time = self._parse_resume_time(queue.resumes_at)
+                if resume_time:
+                    job = asyncio.create_task(self._resume_quota_halted_queue(runner_name, resume_time))
+                    self._jobs.add(job)
+                    job.add_done_callback(self._jobs.discard)
+            elif queue.halt_state is None and queue.pending:
+                job = asyncio.create_task(self._process_runner_queue(runner_name))
+                self._register_queue_job(job, runner_name)
+
+    def _register_queue_job(self, job: asyncio.Task, runner_name: str) -> None:
+        setattr(job, "_task_runner_runner_name", runner_name)
+        self._jobs.add(job)
+        job.add_done_callback(self._jobs.discard)
+
+    def _persist_queue(self, runner_name: str, queue: RunnerQueue) -> None:
+        self.database.save_runner_queue(
+            runner_name, list(queue.pending), queue.active_task_id,
+            queue.halt_state, queue.halt_reason, queue.resumes_at,
+        )
+
+    async def _reconcile_active_task(self, runner_name: str, task_id: str) -> None:
+        task = self.database.get(task_id)
+        if task and task.get("status") == "running" and task.get("execution_id"):
+            self.logger.info("Reconciling active task %s with execution %s", task_id, task["execution_id"])
+            await self._resume_monitor(task_id, task["runner_url"], task["execution_id"])
+        else:
+            reason = "Active task could not be reconciled after restart: no remote execution reference."
+            if task:
+                self.database.update(task_id, status="failed", error=reason, completed_at=utcnow())
+            self.logger.error("Runner queue '%s' halted: %s", runner_name, reason)
+        async with self._queue_lock:
+            queue = self._runner_queues[runner_name]
+            task = self.database.get(task_id) or {}
+            if task.get("status") != "completed":
+                queue.halt_state = "halted"
+                queue.halt_reason = task.get("error") or "Reconciled active task did not complete."
+            queue.active_task_id = None
+            self._persist_queue(runner_name, queue)
+            should_continue = queue.halt_state is None and bool(queue.pending)
+        if should_continue:
+            await self._process_runner_queue(runner_name)
 
     async def stop_scheduler(self) -> None:
         if not self._scheduler_jobs:
@@ -145,6 +205,7 @@ class TaskService:
         async with self._queue_lock:
             queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
             queue.pending.append(task_id)
+            self._persist_queue(runner_name, queue)
             queue_length = len(queue.pending) + (1 if queue.active_task_id else 0)
             position = queue_length - 1
             status = "queued"
@@ -199,7 +260,9 @@ class TaskService:
                     "pending_count": len(queue.pending),
                 }
             queue.halt_state = None
+            queue.halt_reason = None
             queue.resumes_at = None
+            self._persist_queue(runner_name, queue)
             if not queue.active_task_id and queue.pending and not self._queue_worker_running(runner_name):
                 job = asyncio.create_task(self._process_runner_queue(runner_name))
                 setattr(job, "_task_runner_runner_name", runner_name)
@@ -235,6 +298,7 @@ class TaskService:
                 error="Cancelled while queued before runner execution.",
                 completed_at=utcnow(),
             )
+            self._persist_queue(runner_name, queue)
         self.logger.info("Cancelled queued task %s on runner '%s'", task_id, runner_name)
         return {
             "task_id": task_id,
@@ -251,6 +315,7 @@ class TaskService:
                     return
                 task_id = queue.pending.popleft()
                 queue.active_task_id = task_id
+                self._persist_queue(runner_name, queue)
             try:
                 await self._dispatch_or_run_internal(task_id)
                 task = self.database.get(task_id) or {}
@@ -273,7 +338,9 @@ class TaskService:
                             queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
                             queue.pending.appendleft(task_id)
                             queue.halt_state = "quota_halted"
+                            queue.halt_reason = task.get("error") or "Runner quota exceeded."
                             queue.resumes_at = str(resets_at)
+                            self._persist_queue(runner_name, queue)
                         resume_job = asyncio.create_task(
                             self._resume_quota_halted_queue(runner_name, resume_time)
                         )
@@ -290,18 +357,23 @@ class TaskService:
                     async with self._queue_lock:
                         queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
                         queue.halt_state = "halted"
+                        queue.halt_reason = task.get("error") or f"Task ended with status {task.get('status')}"
+                        self._persist_queue(runner_name, queue)
                     return
             except Exception:
                 self.logger.exception("Runner queue '%s' halted while processing task %s", runner_name, task_id)
                 async with self._queue_lock:
                     queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
                     queue.halt_state = "halted"
+                    queue.halt_reason = f"Exception while processing task {task_id}"
+                    self._persist_queue(runner_name, queue)
                 return
             finally:
                 async with self._queue_lock:
                     queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
                     if queue.active_task_id == task_id:
                         queue.active_task_id = None
+                        self._persist_queue(runner_name, queue)
 
     @staticmethod
     def _parse_resume_time(value: str) -> datetime | None:
@@ -323,7 +395,9 @@ class TaskService:
                     return
                 if queue.active_task_id is None:
                     queue.halt_state = None
+                    queue.halt_reason = None
                     queue.resumes_at = None
+                    self._persist_queue(runner_name, queue)
                     break
             await asyncio.sleep(0)
         self.logger.info("Runner queue '%s' resumed after quota reset", runner_name)
@@ -662,6 +736,7 @@ has a durable written reference in the normal task log/result model.
         async with self._queue_lock:
             queue = self._runner_queues.setdefault(ops_check.runner, RunnerQueue())
             queue.pending.append(task_id)
+            self._persist_queue(ops_check.runner, queue)
             if queue.halt_state is None and not self._queue_worker_running(ops_check.runner):
                 job = asyncio.create_task(self._process_runner_queue(ops_check.runner))
                 setattr(job, "_task_runner_runner_name", ops_check.runner)
