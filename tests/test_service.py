@@ -388,6 +388,83 @@ async def test_startup_resumes_running_task_and_records_completed_result(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_startup_restores_pending_fifo_and_processes_in_order(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    database = service.database
+    database.create_task("task-1", "owner/repo", 2, "codex", "http://runner")
+    database.create_task("task-2", "owner/repo", 3, "codex", "http://runner")
+    database.save_runner_queue("codex", ["task-1", "task-2"], None, None, None, None)
+
+    runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed", "completed"]})
+    restarted = TaskService(service.settings, database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    assert [execution[2] for execution in runner.executions] == [2, 3]
+    assert restarted.get_task_result("task-1")["status"] == "completed"
+    assert restarted.get_task_result("task-2")["status"] == "completed"
+    assert (await restarted.get_queue_states())["codex"]["pending"] == []
+
+
+@pytest.mark.asyncio
+async def test_startup_restores_halt_state_and_does_not_process_pending(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.database.create_task("task-1", "owner/repo", 2, "codex", "http://runner")
+    service.database.save_runner_queue(
+        "codex", ["task-1"], None, "halted", "previous task failed", None
+    )
+
+    runner = FakeRunner()
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    queue = restarted._runner_queues["codex"]
+    assert list(queue.pending) == ["task-1"]
+    assert queue.halt_state == "halted"
+    assert queue.halt_reason == "previous task failed"
+    assert runner.prompt is None
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciles_active_remote_execution_without_redispatch(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.database.create_task("active", "owner/repo", 2, "codex", "http://runner")
+    service.database.update("active", status="running", execution_id="execution-1")
+    service.database.create_task("pending", "owner/repo", 3, "codex", "http://runner")
+    service.database.save_runner_queue("codex", ["pending"], "active", None, None, None)
+
+    runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed"]})
+    runner.current_status_by_execution["execution-1"] = "completed"
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    assert [execution[2] for execution in runner.executions] == [3]
+    assert restarted.get_task_result("active")["status"] == "completed"
+    assert restarted.get_task_result("pending")["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_startup_fails_and_halts_active_task_without_execution_reference(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.database.create_task("active", "owner/repo", 2, "codex", "http://runner")
+    service.database.update("active", status="dispatching")
+    service.database.create_task("pending", "owner/repo", 3, "codex", "http://runner")
+    service.database.save_runner_queue("codex", ["pending"], "active", None, None, None)
+
+    runner = FakeRunner()
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    assert restarted.get_task_result("active")["status"] == "failed"
+    assert restarted._runner_queues["codex"].halt_state == "halted"
+    assert list(restarted._runner_queues["codex"].pending) == ["pending"]
+    assert runner.prompt is None
+
+
+@pytest.mark.asyncio
 async def test_output_cap_is_visible(tmp_path):
     runner = FakeRunner(result={"result": "done", "log": "x" * 100})
     service = make_service(tmp_path, runner, output_cap_bytes=60)
@@ -496,7 +573,7 @@ async def test_failed_active_item_halts_runner_queue_and_logs(tmp_path, caplog):
 
 @pytest.mark.asyncio
 async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tmp_path):
-    resets_at = (datetime.now(timezone.utc) + timedelta(seconds=0.1)).isoformat()
+    resets_at = (datetime.now(timezone.utc) + timedelta(seconds=0.5)).isoformat()
     runner = QuotaThenSuccessRunner(resets_at)
     service = make_service(tmp_path, runner, poll_interval_seconds=0.001)
 

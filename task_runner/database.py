@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +45,18 @@ class Database:
                 db.execute("ALTER TABLE tasks ADD COLUMN branch TEXT")
             if "pr_url" not in columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN pr_url TEXT")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS runner_queue_state (
+                    runner TEXT PRIMARY KEY, active_task_id TEXT,
+                    halt_state TEXT, halt_reason TEXT, resumes_at TEXT
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS runner_queue_items (
+                    runner TEXT NOT NULL, position INTEGER NOT NULL, task_id TEXT NOT NULL UNIQUE,
+                    PRIMARY KEY (runner, position)
+                )
+            """)
 
     def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> None:
         with self._lock, self.connect() as db:
@@ -70,3 +84,41 @@ class Database:
         with self.connect() as db:
             rows = db.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
         return [dict(row) for row in rows]
+
+    def save_runner_queue(
+        self,
+        runner: str,
+        pending: list[str],
+        active_task_id: str | None,
+        halt_state: str | None,
+        halt_reason: str | None,
+        resumes_at: str | None,
+    ) -> None:
+        with self._lock, self.connect() as db:
+            db.execute(
+                """INSERT INTO runner_queue_state
+                   (runner,active_task_id,halt_state,halt_reason,resumes_at) VALUES (?,?,?,?,?)
+                   ON CONFLICT(runner) DO UPDATE SET active_task_id=excluded.active_task_id,
+                   halt_state=excluded.halt_state, halt_reason=excluded.halt_reason,
+                   resumes_at=excluded.resumes_at""",
+                (runner, active_task_id, halt_state, halt_reason, resumes_at),
+            )
+            db.execute("DELETE FROM runner_queue_items WHERE runner=?", (runner,))
+            db.executemany(
+                "INSERT INTO runner_queue_items (runner,position,task_id) VALUES (?,?,?)",
+                ((runner, position, task_id) for position, task_id in enumerate(pending)),
+            )
+
+    def load_runner_queues(self) -> dict[str, dict[str, Any]]:
+        with self.connect() as db:
+            states = db.execute("SELECT * FROM runner_queue_state").fetchall()
+            items = db.execute(
+                "SELECT runner,task_id FROM runner_queue_items ORDER BY runner,position"
+            ).fetchall()
+        pending: dict[str, list[str]] = {}
+        for item in items:
+            pending.setdefault(item["runner"], []).append(item["task_id"])
+        return {
+            row["runner"]: {**dict(row), "pending": pending.get(row["runner"], [])}
+            for row in states
+        }
