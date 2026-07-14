@@ -144,7 +144,12 @@ The BuildKit socket is group-readable by GID `0`; `group_add` lets the
 non-root Task Runner process open the socket without changing the container's
 primary user.
 
-An example compose deployment is provided in `deploy/docker-compose.yml`.
+The production compose file is `task-runner-compose.yaml` at the repository
+root. It is gitignored (it holds real credentials — `GITHUB_TOKEN`,
+`TASK_RUNNER_DOCKHAND_TOKEN`) and is the actual, live source of truth for the
+running container's configuration; there is no example compose file checked
+into the repository. Manual deploys should edit that file directly rather than
+rebuild the `docker run` invocation below from scratch.
 
 ## Runner contract
 
@@ -194,9 +199,18 @@ docker run -d \
   -e 'TASK_RUNNER_SCHEDULED_TASKS=[]' \
   -e 'TASK_RUNNER_OPS_IMAGE_CHECKS=[]' \
   -e "TASK_RUNNER_REPOS=$(tr -d '\n' < deploy/repos.json)" \
+  -e 'TASK_RUNNER_TIMEOUT_SECONDS=3600' \
+  -e 'TASK_RUNNER_DOCKHAND_URL=http://192.168.1.68:3003' \
+  -e 'TASK_RUNNER_DOCKHAND_TOKEN=<redacted>' \
+  -e 'TASK_RUNNER_DOCKHAND_ENV=1' \
   -e 'GITHUB_TOKEN=<redacted>' \
   pacific-shift-task-runner:latest
 ```
+
+This command is illustrative of every variable actually in use — prefer
+editing `task-runner-compose.yaml` directly (see above) for real deploys, since
+it already holds the live credential values and stays in sync with what's
+actually running.
 
 Supply `GITHUB_TOKEN` at runtime; do not store the token in the repository.
 
