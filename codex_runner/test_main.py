@@ -106,6 +106,12 @@ def test_detect_quota_exhaustion_via_phrasing_fallback_when_no_structured_event(
     assert quota.structured is False
 
 
+def test_detect_quota_exhaustion_ignores_available_usage_limit_resets():
+    output = "You have 3 usage limit resets available. Run /usage to use one."
+
+    assert main._detect_quota_exhaustion(output) is None
+
+
 def test_session_id_comes_from_real_thread_started_jsonl_shape():
     output = '\n'.join([
         '{"type":"thread.started","thread_id":"019f5439-3c97-73e0-9265-3c0ed42e9c63"}',
