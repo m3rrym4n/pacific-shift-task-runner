@@ -1,0 +1,199 @@
+# Home Assistant configuration for Pacific Shift Task Runner
+#
+# Manual application (this file is a reference artifact; do not include it whole):
+# 1. Copy the input_text, input_select, rest_command, rest, and script blocks into
+#    configuration.yaml. Merge their children into existing blocks with the same
+#    names instead of declaring a second top-level key.
+# 2. If Home Assistant cannot reach 192.168.1.68:6002, replace that base URL with
+#    the production Task Runner URL reachable from the Home Assistant container.
+# 3. Run Home Assistant's configuration check, then restart Home Assistant. The
+#    rest_command and REST sensor integrations are YAML-only and require a restart.
+# 4. Copy only the final `type: entities` block into a manual dashboard card using
+#    the dashboard's raw configuration editor. It does not go in configuration.yaml.
+#
+# The REST API is currently unauthenticated and intended for LAN-only access. Do
+# not expose these URLs outside the trusted network.
+
+# configuration.yaml: merge under `input_text:`.
+input_text:
+  task_runner_issue_number:
+    name: Issue number
+    icon: mdi:ticket-outline
+    mode: text
+    max: 10
+  task_runner_task_id:
+    name: Task ID
+    icon: mdi:identifier
+    mode: text
+    max: 255
+
+# configuration.yaml: merge under `input_select:`. Keep the repository options in
+# sync with GET /api/repos (the initial values below mirror deploy/repos.json).
+input_select:
+  task_runner_repo:
+    name: Repository
+    icon: mdi:github
+    options:
+      - m3rrym4n/cratespy
+      - m3rrym4n/pacific-shift-task-runner
+      - m3rrym4n/pacific-shift-publisher
+      - m3rrym4n/dockhand-mcp
+  task_runner_runner:
+    name: Runner
+    icon: mdi:robot-outline
+    options:
+      - codex
+
+# configuration.yaml: merge under `rest_command:`. These are the five endpoints
+# introduced by issue #48; task_id and runner are URL-encoded before interpolation.
+rest_command:
+  task_runner_dispatch:
+    url: "http://192.168.1.68:6002/api/tasks"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {{ {"repo": repo, "issue_number": issue_number | int, "runner": runner} | to_json }}
+  task_runner_clear_halt:
+    url: >-
+      http://192.168.1.68:6002/api/queues/{{ runner | urlencode }}/clear-halt
+    method: POST
+  task_runner_cancel:
+    url: >-
+      http://192.168.1.68:6002/api/tasks/{{ task_id | urlencode }}/cancel
+    method: POST
+  task_runner_get_result:
+    url: >-
+      http://192.168.1.68:6002/api/tasks/{{ task_id | urlencode }}
+    method: GET
+  task_runner_get_log:
+    url: >-
+      http://192.168.1.68:6002/api/tasks/{{ task_id | urlencode }}/log
+    method: GET
+
+# configuration.yaml: merge this item into the list under `rest:`. This polls the
+# pre-existing GET /api/queues endpoint every 30 seconds and exposes the Codex
+# queue fields as sensor attributes for the dashboard card.
+rest:
+  - resource: "http://192.168.1.68:6002/api/queues"
+    scan_interval: 30
+    timeout: 10
+    sensor:
+      - name: Task Runner Codex Queue
+        unique_id: task_runner_codex_queue
+        icon: mdi:tray-full
+        value_template: >-
+          {% set queue = value_json.get('codex', {}) %}
+          {% if queue.get('halt_state') %}
+            {{ queue.get('halt_state') }}
+          {% elif queue.get('active_task_id') %}
+            running
+          {% elif queue.get('pending', []) | count > 0 %}
+            queued
+          {% else %}
+            idle
+          {% endif %}
+        json_attributes_path: "$.codex"
+        json_attributes:
+          - active_task_id
+          - pending
+          - halt_state
+          - resumes_at
+
+# configuration.yaml: merge under `script:`. response_variable captures the four
+# action responses for trace/debug inspection; Task ID is also copied from a
+# successful dispatch response so the result/log/cancel buttons target that task.
+script:
+  task_runner_dispatch:
+    alias: Task Runner - Dispatch
+    icon: mdi:rocket-launch-outline
+    mode: single
+    sequence:
+      - action: rest_command.task_runner_dispatch
+        data:
+          repo: "{{ states('input_select.task_runner_repo') }}"
+          issue_number: "{{ states('input_text.task_runner_issue_number') | int }}"
+          runner: "{{ states('input_select.task_runner_runner') }}"
+        response_variable: dispatch_response
+      - if:
+          - condition: template
+            value_template: >-
+              {{ dispatch_response.get('status') == 202
+                 and dispatch_response.get('content', {}).get('task_id') }}
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.task_runner_task_id
+            data:
+              value: "{{ dispatch_response.get('content', {}).get('task_id') }}"
+  task_runner_clear_halt:
+    alias: Task Runner - Clear runner halt
+    icon: mdi:play-circle-outline
+    mode: single
+    sequence:
+      - action: rest_command.task_runner_clear_halt
+        data:
+          runner: "{{ states('input_select.task_runner_runner') }}"
+        response_variable: clear_halt_response
+      - action: homeassistant.update_entity
+        target:
+          entity_id: sensor.task_runner_codex_queue
+  task_runner_cancel:
+    alias: Task Runner - Cancel queued task
+    icon: mdi:cancel
+    mode: single
+    sequence:
+      - action: rest_command.task_runner_cancel
+        data:
+          task_id: "{{ states('input_text.task_runner_task_id') }}"
+        response_variable: cancel_response
+      - action: homeassistant.update_entity
+        target:
+          entity_id: sensor.task_runner_codex_queue
+  task_runner_get_result:
+    alias: Task Runner - Get task result
+    icon: mdi:clipboard-text-search-outline
+    mode: single
+    sequence:
+      - action: rest_command.task_runner_get_result
+        data:
+          task_id: "{{ states('input_text.task_runner_task_id') }}"
+        response_variable: result_response
+  task_runner_get_log:
+    alias: Task Runner - Get task log
+    icon: mdi:text-box-search-outline
+    mode: single
+    sequence:
+      - action: rest_command.task_runner_get_log
+        data:
+          task_id: "{{ states('input_text.task_runner_task_id') }}"
+        response_variable: log_response
+
+# Lovelace dashboard raw configuration: add this complete native entities card.
+# The result/log commands intentionally expose their responses in script traces;
+# Home Assistant rest_command responses are not persistent sensor state.
+type: entities
+title: Task Runner
+show_header_toggle: false
+entities:
+  - entity: input_select.task_runner_repo
+    name: Repository
+  - entity: input_text.task_runner_issue_number
+    name: Issue number
+  - entity: input_select.task_runner_runner
+    name: Runner
+  - entity: script.task_runner_dispatch
+    name: Dispatch task
+  - type: section
+    label: Queue controls
+  - entity: sensor.task_runner_codex_queue
+    name: Codex queue
+  - entity: script.task_runner_clear_halt
+    name: Clear runner halt
+  - entity: input_text.task_runner_task_id
+    name: Task ID
+  - entity: script.task_runner_cancel
+    name: Cancel queued task
+  - entity: script.task_runner_get_result
+    name: Get task result
+  - entity: script.task_runner_get_log
+    name: Get task log
