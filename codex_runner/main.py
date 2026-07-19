@@ -115,7 +115,7 @@ def _final_message(output: str) -> str:
     return final
 
 
-_QUOTA_PHRASES = ("usage limit", "reached your")
+_QUOTA_PHRASES = ("you have reached your usage limit", "you've hit your usage limit")
 _RESET_PHRASE_PATTERN = re.compile(r"try again in\s+([0-9]+h\s*[0-9]*m?|[0-9]+m)", re.IGNORECASE)
 
 

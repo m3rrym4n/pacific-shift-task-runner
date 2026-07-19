@@ -126,9 +126,15 @@ internal rebuild job behind any active `codex` work. The job invokes `buildctl`
 through the mounted BuildKit socket, builds `codex_runner` with
 `CODEX_VERSION=<target>`, tags the image as
 `<registry>/<repository>:<codex-version>-<repo-short-sha>`, pushes it to Zot,
-runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, calls
-Dockhand's `deploy_container_swap`, and verifies that
+runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, snapshots the
+running container, and replaces it through Dockhand using that inspected
+configuration with the newly built image reference. It independently verifies
+the replacement's running state and image, then verifies that
 `pacific-shift-codex-runner-auth` is still mounted after the swap.
+If replacement or post-deploy volume verification fails, the job recreates the
+previous image and configuration from the snapshot and independently verifies
+that the restored container is running. This recreate step is required: merely
+stopping and starting the existing container cannot change its image reference.
 
 The Task Runner container must mount the host BuildKit socket directory at the
 same in-container path used by the CrateSpy runner:
@@ -157,7 +163,7 @@ Required endpoints are `POST /execute`, `POST /resume`, `GET /status/{execution_
 
 ## Runner queues
 
-`run_task` places every issue dispatch into an in-memory FIFO queue for the
+`run_task` places every issue dispatch into a SQLite-backed FIFO queue for the
 selected runner and returns a receipt with `task_id`, `status`, `position`,
 `queue_length`, and `runner`. Idle runners start the new task immediately with
 position `0`; busy runners keep later tasks queued until earlier work finishes.
@@ -172,7 +178,12 @@ responses without a usable structured reset timestamp remain generic halts.
 Phrasing-only quota detections deliberately do not auto-resume: Codex's relative
 duration text is neither ISO-compatible nor sufficiently reliable to schedule
 unattended work.
-Queues are independent per runner and are not persisted across restarts.
+Queues are independent per runner and survive orchestrator restarts, including
+pending order, halt details, quota resume time, and the active task reference.
+At startup an active task with a runner execution ID resumes monitoring that
+same remote execution. If no execution ID was persisted, its remote state is
+unknowable: the task is marked failed and the queue halts for operator review,
+preventing a potentially duplicate dispatch. This is reconciliation, not retry.
 Use the `clear_runner_halt` tool to clear a halt for one runner and resume its
 remaining pending items without retrying the failed item. Use
 `cancel_queued_task` to remove and mark one still-pending item as `cancelled`;

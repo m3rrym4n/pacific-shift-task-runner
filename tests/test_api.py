@@ -1,6 +1,7 @@
 import asyncio
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, Mock
 
 from fastapi.testclient import TestClient
 
@@ -68,6 +69,112 @@ def test_health_and_mcp_routes_remain_available(tmp_path, monkeypatch):
 
     assert client.get("/").json() == {"service": "pacific-shift-task-runner", "status": "ok"}
     assert any(getattr(route, "path", None) == "/mcp" for route in main.app.routes)
+
+
+def test_run_task_endpoint_dispatches_and_validates_errors(monkeypatch):
+    receipt = {
+        "task_id": "task-1",
+        "status": "queued",
+        "position": 1,
+        "queue_length": 2,
+        "runner": "codex",
+    }
+    rest_service = Mock()
+    rest_service.run_task = AsyncMock(return_value=receipt)
+    monkeypatch.setattr(main, "service", rest_service)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks", json={"repo": "owner/repo", "issue_number": 48, "runner": "codex"}
+    )
+
+    assert response.status_code == 202
+    assert response.json() == receipt
+    rest_service.run_task.assert_awaited_once_with("owner/repo", 48, "codex")
+    assert client.post("/api/tasks", json={"repo": "owner/repo"}).status_code == 422
+
+    rest_service.run_task.side_effect = ValueError("Unknown runner 'other'")
+    error_response = client.post(
+        "/api/tasks", json={"repo": "owner/repo", "issue_number": 48, "runner": "other"}
+    )
+    assert error_response.status_code == 400
+    assert error_response.json() == {"detail": "Unknown runner 'other'"}
+
+
+def test_task_result_endpoint_matches_service_response_and_returns_404(monkeypatch):
+    result = {"id": "task-1", "status": "completed", "result": "done"}
+    rest_service = Mock()
+    rest_service.get_task_result.return_value = result
+    monkeypatch.setattr(main, "service", rest_service)
+    client = TestClient(main.app)
+
+    response = client.get("/api/tasks/task-1")
+
+    assert response.status_code == 200
+    assert response.json() == result
+    rest_service.get_task_result.assert_called_once_with("task-1")
+    rest_service.get_task_result.side_effect = ValueError("Unknown task_id: missing")
+    assert client.get("/api/tasks/missing").status_code == 404
+
+
+def test_task_log_endpoint_matches_service_response_and_returns_404(monkeypatch):
+    log = {"id": "task-1", "status": "running", "log": "output", "output_truncated": False}
+    rest_service = Mock()
+    rest_service.get_task_log.return_value = log
+    monkeypatch.setattr(main, "service", rest_service)
+    client = TestClient(main.app)
+
+    response = client.get("/api/tasks/task-1/log")
+
+    assert response.status_code == 200
+    assert response.json() == log
+    rest_service.get_task_log.assert_called_once_with("task-1")
+    rest_service.get_task_log.side_effect = ValueError("Unknown task_id: missing")
+    assert client.get("/api/tasks/missing/log").status_code == 404
+
+
+def test_cancel_task_endpoint_matches_service_response_and_maps_errors(monkeypatch):
+    cancelled = {
+        "task_id": "task-1",
+        "runner": "codex",
+        "status": "cancelled",
+        "pending_count": 0,
+    }
+    rest_service = Mock()
+    rest_service.cancel_queued_task = AsyncMock(return_value=cancelled)
+    monkeypatch.setattr(main, "service", rest_service)
+    client = TestClient(main.app)
+
+    response = client.post("/api/tasks/task-1/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == cancelled
+    rest_service.cancel_queued_task.assert_awaited_once_with("task-1")
+    rest_service.cancel_queued_task.side_effect = ValueError("Task 'task-1' is active")
+    assert client.post("/api/tasks/task-1/cancel").status_code == 409
+    rest_service.cancel_queued_task.side_effect = ValueError("Unknown task_id: missing")
+    assert client.post("/api/tasks/missing/cancel").status_code == 404
+
+
+def test_clear_runner_halt_endpoint_matches_service_response_and_returns_404(monkeypatch):
+    cleared = {
+        "runner": "codex",
+        "status": "resumed",
+        "previous_halt_state": "halted",
+        "pending_count": 1,
+    }
+    rest_service = Mock()
+    rest_service.clear_runner_halt = AsyncMock(return_value=cleared)
+    monkeypatch.setattr(main, "service", rest_service)
+    client = TestClient(main.app)
+
+    response = client.post("/api/queues/codex/clear-halt")
+
+    assert response.status_code == 200
+    assert response.json() == cleared
+    rest_service.clear_runner_halt.assert_awaited_once_with("codex")
+    rest_service.clear_runner_halt.side_effect = ValueError("Unknown runner 'other'")
+    assert client.post("/api/queues/other/clear-halt").status_code == 404
 
 
 def test_repo_registry_endpoint_returns_deploy_targets(tmp_path, monkeypatch):

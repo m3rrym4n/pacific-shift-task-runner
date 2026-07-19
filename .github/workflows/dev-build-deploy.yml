@@ -1,6 +1,8 @@
 name: Dev Build and Deploy
 
 on:
+  push:
+    branches: [dev]
   workflow_dispatch:
     inputs:
       simulate_failure:
@@ -19,5 +21,5 @@ jobs:
       health_path: /
       build_args: |
         TASK_RUNNER_SOURCE_SHA=${{ github.sha }}
-      simulate_failure: ${{ inputs.simulate_failure }}
+      simulate_failure: ${{ inputs.simulate_failure || false }}
     secrets: inherit

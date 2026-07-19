@@ -1,6 +1,11 @@
 import pytest
 
-from task_runner.dockhand import DockhandClient, DockhandConfigurationError, DockhandDeployError
+from task_runner.dockhand import (
+    ContainerSnapshot,
+    DockhandClient,
+    DockhandConfigurationError,
+    DockhandDeployError,
+)
 
 
 class FakeResponse:
@@ -23,6 +28,10 @@ class FakeHttpClient:
 
     async def post(self, url, **kwargs):
         self.calls.append(("POST", url, kwargs))
+        return FakeResponse({"success": True})
+
+    async def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
         return FakeResponse({"success": True})
 
     async def get(self, url, **kwargs):
@@ -128,3 +137,57 @@ async def test_deploy_container_swap_fails_when_container_never_becomes_healthy(
 
     with pytest.raises(DockhandDeployError, match="did not become healthy"):
         await client.deploy_container_swap("old-container", "new-container")
+
+
+@pytest.mark.asyncio
+async def test_replace_and_restore_use_snapshot_and_verify_actual_state():
+    old = {
+        "Config": {
+            "Image": "registry/codex:old", "Cmd": ["serve"], "Env": ["KEEP=yes"],
+            "Labels": {"owner": "test"},
+        },
+        "HostConfig": {
+            "Binds": ["auth:/home/codex/.codex:rw"],
+            "PortBindings": {"7000/tcp": [{"HostPort": "7000"}]},
+            "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+            "NetworkMode": "bridge",
+        },
+        "State": {"Status": "running", "Running": True},
+    }
+    http = FakeHttpClient(
+        [
+            {**old, "Config": {**old["Config"], "Image": "registry/codex:new"}},
+            old,
+        ]
+    )
+    client = DockhandClient("http://dockhand:3003", "dh_test", client=http)
+    snapshot = ContainerSnapshot("codex-runner", "registry/codex:old", old)
+
+    deployed = await client.replace_from_snapshot(snapshot, "registry/codex:new")
+    restored = await client.restore_snapshot(snapshot)
+
+    assert deployed.status == "running"
+    assert restored.running is True
+    creates = [call for call in http.calls if call[0] == "POST" and call[1].endswith("/api/containers")]
+    assert creates[0][2]["json"]["image"] == "registry/codex:new"
+    assert creates[0][2]["json"]["volumeBinds"] == ["auth:/home/codex/.codex:rw"]
+    assert creates[0][2]["json"]["ports"]["7000/tcp"] == {"HostPort": "7000"}
+    assert creates[1][2]["json"]["image"] == "registry/codex:old"
+
+
+@pytest.mark.asyncio
+async def test_replace_rejects_false_positive_when_get_reports_wrong_image():
+    raw = {
+        "Config": {"Image": "registry/codex:old"},
+        "HostConfig": {},
+        "State": {"Status": "running", "Running": True},
+    }
+    client = DockhandClient(
+        "http://dockhand:3003", "dh_test", client=FakeHttpClient([raw])
+    )
+
+    with pytest.raises(DockhandDeployError, match="expected 'registry/codex:new'"):
+        await client.replace_from_snapshot(
+            ContainerSnapshot("codex-runner", "registry/codex:old", raw),
+            "registry/codex:new",
+        )

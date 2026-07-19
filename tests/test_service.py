@@ -13,6 +13,7 @@ from task_runner.config import (
 )
 from task_runner.database import Database
 from task_runner.service import TaskService
+from task_runner.dockhand import ContainerSnapshot, ContainerState
 
 
 class FakeGitHub:
@@ -31,6 +32,13 @@ class FakeDockhand:
         self.volume_present = volume_present
         self.volume_checks = []
         self.deploys = []
+        self.pulls = []
+        self.restores = []
+        self.snapshot = ContainerSnapshot(
+            "codex-runner",
+            "zot.lan:5000/codex-runner:old",
+            {"Config": {"Image": "zot.lan:5000/codex-runner:old"}, "State": {"Running": True}},
+        )
 
     async def container_uses_volume(self, container, volume_name):
         self.volume_checks.append((container, volume_name))
@@ -48,6 +56,34 @@ class FakeDockhand:
                 "health_status": "healthy",
             },
         )()
+
+    async def pull_image(self, image):
+        self.pulls.append(image)
+
+    async def snapshot_container(self, container):
+        return self.snapshot
+
+    async def replace_from_snapshot(self, snapshot, image):
+        self.deploys.append((snapshot.name, snapshot.name))
+        return type(
+            "ContainerDeployResult",
+            (),
+            {"stopped_container": snapshot.name, "started_container": snapshot.name,
+             "status": "running", "health_status": "healthy"},
+        )()
+
+    async def restore_snapshot(self, snapshot):
+        self.restores.append(snapshot)
+        return ContainerState(
+            snapshot.name, "running", True, "healthy",
+            {"Config": {"Image": snapshot.image}, "State": {"Running": True}},
+        )
+
+
+class FailingDeployDockhand(FakeDockhand):
+    async def replace_from_snapshot(self, snapshot, image):
+        self.deploys.append((snapshot.name, snapshot.name))
+        raise RuntimeError("forced start failure")
 
 
 class FakeRunner:
@@ -352,6 +388,83 @@ async def test_startup_resumes_running_task_and_records_completed_result(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_startup_restores_pending_fifo_and_processes_in_order(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    database = service.database
+    database.create_task("task-1", "owner/repo", 2, "codex", "http://runner")
+    database.create_task("task-2", "owner/repo", 3, "codex", "http://runner")
+    database.save_runner_queue("codex", ["task-1", "task-2"], None, None, None, None)
+
+    runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed", "completed"]})
+    restarted = TaskService(service.settings, database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    assert [execution[2] for execution in runner.executions] == [2, 3]
+    assert restarted.get_task_result("task-1")["status"] == "completed"
+    assert restarted.get_task_result("task-2")["status"] == "completed"
+    assert (await restarted.get_queue_states())["codex"]["pending"] == []
+
+
+@pytest.mark.asyncio
+async def test_startup_restores_halt_state_and_does_not_process_pending(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.database.create_task("task-1", "owner/repo", 2, "codex", "http://runner")
+    service.database.save_runner_queue(
+        "codex", ["task-1"], None, "halted", "previous task failed", None
+    )
+
+    runner = FakeRunner()
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    queue = restarted._runner_queues["codex"]
+    assert list(queue.pending) == ["task-1"]
+    assert queue.halt_state == "halted"
+    assert queue.halt_reason == "previous task failed"
+    assert runner.prompt is None
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciles_active_remote_execution_without_redispatch(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.database.create_task("active", "owner/repo", 2, "codex", "http://runner")
+    service.database.update("active", status="running", execution_id="execution-1")
+    service.database.create_task("pending", "owner/repo", 3, "codex", "http://runner")
+    service.database.save_runner_queue("codex", ["pending"], "active", None, None, None)
+
+    runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed"]})
+    runner.current_status_by_execution["execution-1"] = "completed"
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    assert [execution[2] for execution in runner.executions] == [3]
+    assert restarted.get_task_result("active")["status"] == "completed"
+    assert restarted.get_task_result("pending")["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_startup_fails_and_halts_active_task_without_execution_reference(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.database.create_task("active", "owner/repo", 2, "codex", "http://runner")
+    service.database.update("active", status="dispatching")
+    service.database.create_task("pending", "owner/repo", 3, "codex", "http://runner")
+    service.database.save_runner_queue("codex", ["pending"], "active", None, None, None)
+
+    runner = FakeRunner()
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted.resume_running_tasks()
+    await asyncio.gather(*restarted._jobs)
+
+    assert restarted.get_task_result("active")["status"] == "failed"
+    assert restarted._runner_queues["codex"].halt_state == "halted"
+    assert list(restarted._runner_queues["codex"].pending) == ["pending"]
+    assert runner.prompt is None
+
+
+@pytest.mark.asyncio
 async def test_output_cap_is_visible(tmp_path):
     runner = FakeRunner(result={"result": "done", "log": "x" * 100})
     service = make_service(tmp_path, runner, output_cap_bytes=60)
@@ -460,7 +573,7 @@ async def test_failed_active_item_halts_runner_queue_and_logs(tmp_path, caplog):
 
 @pytest.mark.asyncio
 async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tmp_path):
-    resets_at = (datetime.now(timezone.utc) + timedelta(seconds=0.1)).isoformat()
+    resets_at = (datetime.now(timezone.utc) + timedelta(seconds=0.5)).isoformat()
     runner = QuotaThenSuccessRunner(resets_at)
     service = make_service(tmp_path, runner, poll_interval_seconds=0.001)
 
@@ -671,10 +784,70 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[0]
     assert commands[1][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
     assert dockhand.deploys == [("codex-runner", "codex-runner")]
+    assert dockhand.pulls == ["zot.lan:5000/codex-runner:0.144.1-abc1234"]
     assert dockhand.volume_checks == [
         ("codex-runner", "pacific-shift-codex-runner-auth"),
         ("codex-runner", "pacific-shift-codex-runner-auth"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_image_forced_deploy_failure_restores_snapshot_and_logs_outcome(tmp_path):
+    runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
+    dockhand = FailingDeployDockhand()
+    service = make_service(tmp_path, runner, dockhand=dockhand)
+    service._run_command = lambda command: _async_value("ok")
+    check = OpsImageCheck(
+        "codex", "codex", "owner/repo", 54, "zot.lan:5000", "codex-runner",
+        "codex-runner", "codex-runner", "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock", "abc1234", 2, False, 86400,
+    )
+
+    assert await service.check_ops_image(check) is True
+    await asyncio.gather(*service._jobs)
+
+    task = service.get_task_result(service.list_tasks()[0]["id"])
+    log = service.get_task_log(task["id"])["log"]
+    assert task["status"] == "failed"
+    assert task["error"] == "RuntimeError: forced start failure"
+    assert dockhand.restores == [dockhand.snapshot]
+    assert "Rollback started" in log
+    assert "Rollback verified from actual container state" in log
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_call", [1, 2], ids=["build", "prune"])
+async def test_ops_image_pre_deploy_failures_leave_container_untouched(tmp_path, failure_call):
+    runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
+    dockhand = FakeDockhand()
+    service = make_service(tmp_path, runner, dockhand=dockhand)
+    calls = 0
+
+    async def fail_at_selected_command(command):
+        nonlocal calls
+        calls += 1
+        if calls == failure_call:
+            raise RuntimeError("forced pre-deploy failure")
+        return "ok"
+
+    service._run_command = fail_at_selected_command
+    check = OpsImageCheck(
+        "codex", "codex", "owner/repo", 54, "zot.lan:5000", "codex-runner",
+        "codex-runner", "codex-runner", "pacific-shift-codex-runner-auth",
+        "unix:///run/buildkit/buildkitd.sock", "abc1234", 2, False, 86400,
+    )
+
+    assert await service.check_ops_image(check) is True
+    await asyncio.gather(*service._jobs)
+
+    assert service.list_tasks()[0]["status"] == "failed"
+    assert dockhand.pulls == []
+    assert dockhand.deploys == []
+    assert dockhand.restores == []
+
+
+async def _async_value(value):
+    return value
 
 
 @pytest.mark.asyncio

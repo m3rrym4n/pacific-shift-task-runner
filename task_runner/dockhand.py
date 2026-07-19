@@ -36,6 +36,13 @@ class ContainerDeployResult:
     health_status: str | None
 
 
+@dataclass(frozen=True)
+class ContainerSnapshot:
+    name: str
+    image: str
+    raw: dict[str, Any]
+
+
 class DockhandClient:
     def __init__(
         self,
@@ -80,15 +87,48 @@ class DockhandClient:
     async def start_container(self, container: str) -> dict[str, Any]:
         return await self._post(f"/api/containers/{container}/start")
 
+    async def remove_container(self, container: str) -> dict[str, Any]:
+        return await self._request("DELETE", f"/api/containers/{container}", extra_params={"force": "true"})
+
+    async def create_container(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._post("/api/containers", payload)
+        if result.get("success") is not True:
+            raise DockhandDeployError("Dockhand did not report successful container creation")
+        return result
+
+    async def pull_image(self, image: str) -> None:
+        result = await self._post("/api/images/pull", {"image": image, "scanAfterPull": False})
+        job_id = result.get("jobId")
+        if not job_id:
+            raise DockhandDeployError("Dockhand image pull returned no job ID")
+        deadline = asyncio.get_running_loop().time() + self.verify_timeout_seconds
+        while True:
+            job = await self._get_json(f"/api/jobs/{job_id}")
+            status = job.get("status")
+            if status == "done":
+                pull_status = (job.get("result") or {}).get("status")
+                if pull_status != "complete":
+                    raise DockhandDeployError(f"Dockhand image pull failed: status={pull_status}")
+                return
+            if status not in ("pending", "running"):
+                raise DockhandDeployError(f"Dockhand image pull has unexpected status '{status}'")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise DockhandDeployError(f"Dockhand image pull timed out for '{image}'")
+            await asyncio.sleep(self.verify_interval_seconds)
+
     async def get_container(self, container: str) -> ContainerState:
+        data = _unwrap(await self._get_json(f"/api/containers/{container}"))
+        return _container_state(container, data)
+
+    async def _get_json(self, path: str) -> dict[str, Any]:
         response = await self.client.get(
-            f"{self.url}/api/containers/{container}",
-            headers=self._headers(),
-            params=self._params(),
+            f"{self.url}{path}", headers=self._headers(), params=self._params()
         )
         response.raise_for_status()
-        data = _unwrap(response.json())
-        return _container_state(container, data)
+        data = response.json()
+        if not isinstance(data, dict):
+            raise DockhandDeployError("Dockhand returned a non-object response")
+        return data
 
     async def deploy_container_swap(self, stop_container: str, start_container: str) -> ContainerDeployResult:
         if not stop_container or not start_container:
@@ -102,6 +142,51 @@ class DockhandClient:
             status=state.status,
             health_status=state.health_status,
         )
+
+    async def snapshot_container(self, container: str) -> ContainerSnapshot:
+        state = await self.get_container(container)
+        config = state.raw.get("Config") or state.raw.get("config")
+        if not isinstance(config, dict) or not config.get("Image") and not config.get("image"):
+            raise DockhandDeployError(f"Container '{container}' snapshot has no configured image")
+        image = str(config.get("Image") or config.get("image"))
+        return ContainerSnapshot(container, image, state.raw)
+
+    async def replace_from_snapshot(self, snapshot: ContainerSnapshot, image: str) -> ContainerDeployResult:
+        await self.stop_container(snapshot.name)
+        await self.remove_container(snapshot.name)
+        await self.create_container(_create_payload(snapshot, image))
+        await self.start_container(snapshot.name)
+        state = await self.wait_until_started(snapshot.name)
+        self._verify_actual_container(state, image)
+        return ContainerDeployResult(snapshot.name, snapshot.name, state.status, state.health_status)
+
+    async def restore_snapshot(self, snapshot: ContainerSnapshot) -> ContainerState:
+        # Cleanup is deliberately best-effort: rollback must continue when the
+        # failed replacement was never created or could not be stopped.
+        try:
+            await self.stop_container(snapshot.name)
+        except Exception:
+            pass
+        try:
+            await self.remove_container(snapshot.name)
+        except Exception:
+            pass
+        await self.create_container(_create_payload(snapshot, snapshot.image))
+        await self.start_container(snapshot.name)
+        state = await self.wait_until_started(snapshot.name)
+        self._verify_actual_container(state, snapshot.image)
+        return state
+
+    @staticmethod
+    def _verify_actual_container(state: ContainerState, expected_image: str) -> None:
+        config = state.raw.get("Config") or state.raw.get("config") or {}
+        actual_image = config.get("Image") or config.get("image")
+        if not state.running:
+            raise DockhandDeployError(f"Container '{state.identifier}' is not running after replacement")
+        if actual_image != expected_image:
+            raise DockhandDeployError(
+                f"Container '{state.identifier}' uses '{actual_image}', expected '{expected_image}'"
+            )
 
     async def container_uses_volume(self, container: str, volume_name: str) -> bool:
         if not volume_name:
@@ -123,15 +208,57 @@ class DockhandClient:
         status = last_state.status if last_state else "unknown"
         raise DockhandDeployError(f"Container '{container}' did not become healthy before timeout: status={status}{health}")
 
-    async def _post(self, path: str) -> dict[str, Any]:
-        response = await self.client.post(
+    async def _post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self._request("POST", path, payload)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        extra_params: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = self._params()
+        params.update(extra_params or {})
+        response = await self.client.request(
+            method,
             f"{self.url}{path}",
             headers=self._headers(),
-            json={},
-            params=self._params(),
+            json=payload or {},
+            params=params,
         )
         response.raise_for_status()
         return response.json()
+
+
+def _create_payload(snapshot: ContainerSnapshot, image: str) -> dict[str, Any]:
+    config = snapshot.raw.get("Config") or snapshot.raw.get("config") or {}
+    host = snapshot.raw.get("HostConfig") or snapshot.raw.get("hostConfig") or {}
+    port_bindings = host.get("PortBindings") or host.get("portBindings") or {}
+    ports = {
+        key: values[0]
+        for key, values in port_bindings.items()
+        if isinstance(values, list) and values
+    }
+    restart = host.get("RestartPolicy") or host.get("restartPolicy") or {}
+    return {
+        "name": snapshot.name,
+        "image": image,
+        "cmd": config.get("Cmd"),
+        "entrypoint": config.get("Entrypoint"),
+        "workingDir": config.get("WorkingDir"),
+        "user": config.get("User"),
+        "env": config.get("Env") or [],
+        "labels": config.get("Labels") or {},
+        "volumeBinds": host.get("Binds") or [],
+        "ports": ports,
+        "restartPolicy": restart.get("Name") or "no",
+        "restartMaxRetries": restart.get("MaximumRetryCount") or 0,
+        "networkMode": host.get("NetworkMode") or "default",
+        "privileged": host.get("Privileged") or False,
+        "readonlyRootfs": host.get("ReadonlyRootfs") or False,
+    }
 
 
 def _unwrap(value: Any) -> dict[str, Any]:

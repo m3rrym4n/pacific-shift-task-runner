@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, status
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 from .config import Settings
 from .database import Database
@@ -84,6 +85,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Pacific Shift Task Runner", lifespan=lifespan)
 
 
+class RunTaskRequest(BaseModel):
+    repo: str
+    issue_number: int
+    runner: str
+
+
 @app.get("/")
 def health() -> dict[str, str]:
     return {"service": "pacific-shift-task-runner", "status": "ok"}
@@ -98,9 +105,54 @@ def api_tasks(
     return service.list_dashboard_tasks(window, limit, offset)
 
 
+@app.post("/api/tasks", status_code=status.HTTP_202_ACCEPTED)
+async def api_run_task(request: RunTaskRequest) -> dict:
+    try:
+        return await service.run_task(request.repo, request.issue_number, request.runner)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@app.get("/api/tasks/{task_id}")
+def api_task_result(task_id: str) -> dict:
+    try:
+        return service.get_task_result(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@app.get("/api/tasks/{task_id}/log")
+def api_task_log(task_id: str) -> dict:
+    try:
+        return service.get_task_log(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def api_cancel_task(task_id: str) -> dict:
+    try:
+        return await service.cancel_queued_task(task_id)
+    except ValueError as exc:
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if str(exc).startswith("Unknown task_id:")
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
 @app.get("/api/queues")
 async def api_queues() -> dict:
     return await service.get_queue_states()
+
+
+@app.post("/api/queues/{runner}/clear-halt")
+async def api_clear_runner_halt(runner: str) -> dict:
+    try:
+        return await service.clear_runner_halt(runner)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @app.get("/api/repos")
