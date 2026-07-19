@@ -148,6 +148,11 @@ automation:
 # persistent notification (fixed notification_id per script, so each new run
 # replaces the previous one rather than piling up) since rest_command responses
 # are not exposed as persistent sensor state and would otherwise be invisible.
+# The dispatch success/failure branch condition explicitly checks `is not none`
+# on the right-hand operand — Jinja's `and` returns the deciding operand itself
+# (here, the task_id string) rather than a real boolean, and Home Assistant's
+# template condition only treats the literal strings true/1/yes/on as truthy,
+# so an un-normalized `and` chain silently routes real successes into `else`.
 script:
   task_runner_dispatch:
     alias: Task Runner - Dispatch
@@ -164,7 +169,7 @@ script:
           - condition: template
             value_template: >-
               {{ dispatch_response.get('status') == 202
-                 and dispatch_response.get('content', {}).get('task_id') }}
+                 and dispatch_response.get('content', {}).get('task_id') is not none }}
         then:
           - action: input_text.set_value
             target:
