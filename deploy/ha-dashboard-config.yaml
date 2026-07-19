@@ -1,9 +1,9 @@
 # Home Assistant configuration for Pacific Shift Task Runner
 #
 # Manual application (this file is a reference artifact; do not include it whole):
-# 1. Copy the input_text, input_select, rest_command, rest, and script blocks into
-#    configuration.yaml. Merge their children into existing blocks with the same
-#    names instead of declaring a second top-level key.
+# 1. Copy the input_text, input_select, rest_command, rest, automation, and script
+#    blocks into configuration.yaml. Merge their children into existing blocks
+#    with the same names instead of declaring a second top-level key.
 # 2. If Home Assistant cannot reach 192.168.1.68:6002, replace that base URL with
 #    the production Task Runner URL reachable from the Home Assistant container.
 # 3. Run Home Assistant's configuration check, then restart Home Assistant. The
@@ -27,8 +27,9 @@ input_text:
     mode: text
     max: 255
 
-# configuration.yaml: merge under `input_select:`. Keep the repository options in
-# sync with GET /api/repos (the initial values below mirror deploy/repos.json).
+# configuration.yaml: merge under `input_select:`. The repository options below
+# are a safe fallback containing all repos registered as of 2026-07-19. The REST
+# sensor and automation later in this file replace them from GET /api/repos.
 input_select:
   task_runner_repo:
     name: Repository
@@ -38,6 +39,7 @@ input_select:
       - m3rrym4n/pacific-shift-task-runner
       - m3rrym4n/pacific-shift-publisher
       - m3rrym4n/dockhand-mcp
+      - m3rrym4n/pacific-shift-ci
   task_runner_runner:
     name: Runner
     icon: mdi:robot-outline
@@ -98,6 +100,46 @@ rest:
           - pending
           - halt_state
           - resumes_at
+  # GET /api/repos returns full repo config objects. Preserve the response's
+  # `repos` list as an attribute; the automation below extracts each `repo` name.
+  - resource: "http://192.168.1.68:6002/api/repos"
+    scan_interval: 300
+    timeout: 10
+    sensor:
+      - name: Task Runner Repositories
+        unique_id: task_runner_repositories
+        icon: mdi:source-repository-multiple
+        value_template: "{{ value_json.get('repos', []) | count }}"
+        json_attributes:
+          - repos
+
+# configuration.yaml: merge this item into the list under `automation:`. The
+# input_select integration cannot template its YAML `options`, but its native
+# set_options action accepts a templated list. Refresh on startup and whenever
+# the polled registry response changes. If the endpoint is unavailable or empty,
+# the dated fallback options above remain in place.
+automation:
+  - id: task_runner_refresh_repositories
+    alias: Task Runner - Refresh repositories
+    mode: restart
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: sensor.task_runner_repositories
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ state_attr('sensor.task_runner_repositories', 'repos')
+             | default([], true) | count > 0 }}
+    actions:
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.task_runner_repo
+        data:
+          options: >-
+            {{ state_attr('sensor.task_runner_repositories', 'repos')
+               | default([], true) | map(attribute='repo') | list }}
 
 # configuration.yaml: merge under `script:`. response_variable captures the four
 # action responses for trace/debug inspection; Task ID is also copied from a
