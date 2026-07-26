@@ -61,6 +61,38 @@ def test_runner_prompt_requires_agent_owned_clone_and_github_workflow():
     assert prompt.endswith("issue prompt\n")
 
 
+def test_fresh_dispatch_bypasses_approvals_and_sandbox(monkeypatch, tmp_path):
+    captured = {}
+
+    async def capture_command(execution, request, command, fallback_to_fresh=False):
+        captured["command"] = command
+
+    monkeypatch.setattr(main, "_run_command", capture_command)
+    execution = main.Execution(id="fresh", workspace=tmp_path)
+    request = main.ExecuteRequest(repo="owner/repo", prompt="do it")
+
+    asyncio.run(main._run(execution, request))
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
+
+
+def test_resumed_dispatch_bypasses_approvals_and_sandbox(monkeypatch, tmp_path):
+    captured = {}
+
+    async def capture_command(execution, request, command, fallback_to_fresh=False):
+        captured["command"] = command
+        captured["fallback_to_fresh"] = fallback_to_fresh
+
+    monkeypatch.setattr(main, "_run_command", capture_command)
+    execution = main.Execution(id="resume", workspace=tmp_path)
+    request = main.ResumeRequest(repo="owner/repo", prompt="do it", session_id="session-id")
+
+    asyncio.run(main._run_resume(execution, request))
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
+    assert captured["fallback_to_fresh"] is True
+
+
 def test_version_parser_accepts_codex_cli_output():
     assert main._parse_version("codex-cli 0.142.5") == "0.142.5"
     assert main._parse_version("0.144.1\n") == "0.144.1"

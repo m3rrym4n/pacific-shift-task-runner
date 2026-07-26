@@ -11,6 +11,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv git gh ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global "@openai/codex@${CODEX_VERSION}" \
+    && npx --yes playwright install --with-deps chrome \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/venv
 
 # Use the host daemon through its mounted socket; do not run a daemon here.
