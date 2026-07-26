@@ -3,6 +3,8 @@ FROM moby/buildkit:v0.24.0 AS buildkit
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# buildctl's client-side auth provider needs a writable token-seed directory.
+ENV DOCKER_CONFIG=/data/.docker
 ARG TASK_RUNNER_SOURCE_SHA=unknown
 ENV TASK_RUNNER_SOURCE_SHA=${TASK_RUNNER_SOURCE_SHA}
 WORKDIR /app
