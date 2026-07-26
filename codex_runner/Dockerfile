@@ -5,12 +5,15 @@ FROM node:22-bookworm-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" CODEX_HOME=/home/codex/.codex
 
-ARG CODEX_VERSION=latest
+ARG CODEX_VERSION=0.145.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv git gh ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global "@openai/codex@${CODEX_VERSION}" \
+    && npx --yes playwright install --with-deps chrome \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/venv
 
 # Use the host daemon through its mounted socket; do not run a daemon here.
