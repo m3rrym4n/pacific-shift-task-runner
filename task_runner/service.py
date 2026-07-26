@@ -1,5 +1,8 @@
 import asyncio
+import base64
 import logging
+import os
+import tempfile
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -470,23 +473,47 @@ class TaskService:
                     f"Container '{check.start_container}' is not configured with required volume '{check.auth_volume}'"
                 )
             log_parts.append(f"Verified required auth volume before deploy: {check.auth_volume}")
-            build_command = [
-                "buildctl",
-                "--addr",
-                check.buildkit_addr,
-                "build",
-                "--frontend",
-                "dockerfile.v0",
-                "--local",
-                "context=/app/codex_runner",
-                "--local",
-                "dockerfile=/app/codex_runner",
-                "--opt",
-                f"build-arg:CODEX_VERSION={job.target_version}",
-                "--output",
-                f"type=image,name={image},push=true",
-            ]
-            log_parts.append(await self._run_command(build_command))
+            if not self.settings.github_token:
+                raise RuntimeError("GITHUB_TOKEN is required to clone the codex-runner source")
+            credentials = base64.b64encode(
+                f"x-access-token:{self.settings.github_token}".encode()
+            ).decode()
+            git_env = {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credentials}",
+            }
+            with tempfile.TemporaryDirectory(prefix="codex-runner-build-") as workspace:
+                source_dir = os.path.join(workspace, "codex-runner")
+                clone_command = [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    "main",
+                    "--single-branch",
+                    "https://github.com/m3rrym4n/codex-runner.git",
+                    source_dir,
+                ]
+                log_parts.append(await self._run_command(clone_command, env=git_env))
+                build_command = [
+                    "buildctl",
+                    "--addr",
+                    check.buildkit_addr,
+                    "build",
+                    "--frontend",
+                    "dockerfile.v0",
+                    "--local",
+                    f"context={source_dir}",
+                    "--local",
+                    f"dockerfile={source_dir}",
+                    "--opt",
+                    f"build-arg:CODEX_VERSION={job.target_version}",
+                    "--output",
+                    f"type=image,name={image},push=true",
+                ]
+                log_parts.append(await self._run_command(build_command))
             prune_command = [
                 "python",
                 "/app/scripts/prune_zot_image_tags.py",
@@ -564,11 +591,12 @@ class TaskService:
         finally:
             self._internal_ops_jobs.pop(task_id, None)
 
-    async def _run_command(self, command: list[str]) -> str:
+    async def _run_command(self, command: list[str], env: dict[str, str] | None = None) -> str:
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=None if env is None else {**os.environ, **env},
         )
         stdout, _ = await process.communicate()
         output = stdout.decode("utf-8", errors="replace")

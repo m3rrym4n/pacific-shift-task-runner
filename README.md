@@ -123,7 +123,8 @@ Configure Ops Image checks with `TASK_RUNNER_OPS_IMAGE_CHECKS`:
 The Codex runner exposes `GET /codex/version`, returning installed version,
 latest npm version, and a `drift_detected` boolean. A drift result enqueues an
 internal rebuild job behind any active `codex` work. The job invokes `buildctl`
-through the mounted BuildKit socket, builds `codex_runner` with
+through the mounted BuildKit socket after shallow-cloning the current `main`
+branch of `m3rrym4n/codex-runner`, builds that source with
 `CODEX_VERSION=<target>`, tags the image as
 `<registry>/<repository>:<codex-version>-<repo-short-sha>`, pushes it to Zot,
 runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, snapshots the
