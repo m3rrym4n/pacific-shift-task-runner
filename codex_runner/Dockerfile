@@ -5,7 +5,7 @@ FROM node:22-bookworm-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" CODEX_HOME=/home/codex/.codex
 
-ARG CODEX_VERSION=latest
+ARG CODEX_VERSION=0.145.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv git gh ca-certificates openssh-client \
