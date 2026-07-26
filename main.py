@@ -125,25 +125,38 @@ class QuotaExhaustion:
     structured: bool
 
 
-def _detect_quota_exhaustion(output: str) -> QuotaExhaustion | None:
+def _detect_quota_exhaustion(output: str, exit_code: int) -> QuotaExhaustion | None:
     """Detect Codex quota/rate-limit exhaustion as a distinct condition.
 
     Primary path: parse `token_count` JSONL events for a `rate_limits` payload
     with per-scope `used_percent`/`resets_at` fields. Fallback path: match
-    known quota-exhaustion phrasing in the raw output, for cases where a
-    structured event isn't present. Detection relies only on this task's own
-    output/exit behavior, not on querying Codex's separate self-reported
-    `/status` (which has a known "phantom limit" discrepancy upstream).
+    known quota-exhaustion phrasing in agent-authored messages when the process
+    exits unsuccessfully. Tool-call output is never inspected for either path.
+    Detection relies only on this task's own output/exit behavior, not on
+    querying Codex's separate self-reported `/status` (which has a known
+    "phantom limit" discrepancy upstream).
     """
     resets_at: str | None = None
     quota_detected = False
+    agent_messages: list[str] = []
     for line in output.splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("type") != "token_count":
+
+        event_type = event.get("type")
+        if event_type == "item.completed":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text")
+                if isinstance(text, str):
+                    agent_messages.append(text)
             continue
+
+        if event_type != "token_count":
+            continue
+
         rate_limits = event.get("rate_limits")
         if not isinstance(rate_limits, dict):
             continue
@@ -161,9 +174,13 @@ def _detect_quota_exhaustion(output: str) -> QuotaExhaustion | None:
     if quota_detected:
         return QuotaExhaustion(resets_at=resets_at, structured=True)
 
-    lowered = output.lower()
+    if exit_code == 0:
+        return None
+
+    message_text = "\n".join(agent_messages)
+    lowered = message_text.lower()
     if any(phrase in lowered for phrase in _QUOTA_PHRASES):
-        match = _RESET_PHRASE_PATTERN.search(output)
+        match = _RESET_PHRASE_PATTERN.search(message_text)
         return QuotaExhaustion(resets_at=match.group(1) if match else None, structured=False)
 
     return None
@@ -231,14 +248,22 @@ async def _run_command(
         execution.exit_code = execution.process.returncode
         execution.log = stdout.decode("utf-8", errors="replace")
         execution.session_id = _session_id(execution.log)
-        if fallback_to_fresh and execution.exit_code != 0 and _detect_quota_exhaustion(execution.log) is None:
+        if (
+            fallback_to_fresh
+            and execution.exit_code != 0
+            and _detect_quota_exhaustion(execution.log, execution.exit_code) is None
+        ):
             resume_log = execution.log
             marker = "[RESUME FAILED: falling back to a fresh Codex dispatch]"
             await _run(execution, request)
             execution.log = f"{resume_log.rstrip()}\n{marker}\n{execution.log}"
             return
         execution.result = _final_message(execution.log)
-        quota = _detect_quota_exhaustion(execution.log)
+        if execution.exit_code == 0:
+            execution.status = "completed"
+            return
+
+        quota = _detect_quota_exhaustion(execution.log, execution.exit_code)
         if quota is not None:
             execution.status = "quota_exceeded"
             execution.resets_at = quota.resets_at
@@ -246,8 +271,6 @@ async def _run_command(
             execution.error = "Codex usage limit reached." + (
                 f" Resets at {quota.resets_at}." if quota.resets_at else ""
             )
-        elif execution.exit_code == 0:
-            execution.status = "completed"
         else:
             execution.status = "failed"
             execution.error = f"codex exec exited with code {execution.exit_code}"
