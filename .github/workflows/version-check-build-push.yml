@@ -1,0 +1,130 @@
+name: Codex Version Check, Build, and Push
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      installed_version_override:
+        description: Installed version used for drift-test runs (leave empty normally)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-runner-version-build
+  cancel-in-progress: false
+
+env:
+  CODEX_RUNNER_VERSION_URL: http://192.168.1.68:7000/codex/version
+  REGISTRY: 192.168.1.68:5050
+  IMAGE_REPOSITORY: codex-runner
+  BUILDER: zimaos-remote
+  BUILDKIT_ADDRESS: unix:///run/buildkit/buildkitd.sock
+
+jobs:
+  check-build-push:
+    runs-on: [self-hosted, zimaos, codex-runner]
+    timeout-minutes: 90
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Check for Codex CLI version drift
+        id: version
+        env:
+          INSTALLED_VERSION_OVERRIDE: ${{ inputs.installed_version_override || '' }}
+        run: |
+          curl --fail --silent --show-error --max-time 30 \
+            "$CODEX_RUNNER_VERSION_URL" > "$RUNNER_TEMP/codex-version.json"
+          python3 .github/scripts/check-version-drift.py \
+            "$RUNNER_TEMP/codex-version.json" \
+            --installed-override "$INSTALLED_VERSION_OVERRIDE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Report versions
+        env:
+          INSTALLED: ${{ steps.version.outputs.installed }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          DRIFT_DETECTED: ${{ steps.version.outputs.drift_detected }}
+        run: |
+          echo "Installed Codex CLI: $INSTALLED"
+          echo "Latest Codex CLI: $LATEST"
+          echo "Version drift detected: $DRIFT_DETECTED"
+
+      - name: Ensure remote buildx builder exists
+        if: steps.version.outputs.drift_detected == 'true'
+        run: |
+          docker buildx inspect "$BUILDER" >/dev/null 2>&1 || \
+            docker buildx create --name "$BUILDER" --driver remote "$BUILDKIT_ADDRESS"
+          docker buildx use "$BUILDER"
+
+      - name: Compute immutable image tag
+        if: steps.version.outputs.drift_detected == 'true'
+        id: image
+        env:
+          CODEX_VERSION: ${{ steps.version.outputs.latest }}
+        run: |
+          short_sha=$(git rev-parse --short=7 HEAD)
+          image_ref="$REGISTRY/$IMAGE_REPOSITORY:$CODEX_VERSION-$short_sha"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push drift image
+        if: steps.version.outputs.drift_detected == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          builder: ${{ env.BUILDER }}
+          push: true
+          build-args: |
+            CODEX_VERSION=${{ steps.version.outputs.latest }}
+          tags: ${{ steps.image.outputs.image_ref }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.image.outputs.revision }}
+            org.opencontainers.image.version=${{ steps.version.outputs.latest }}
+
+      - name: Pull back and verify pushed image
+        if: steps.version.outputs.drift_detected == 'true'
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+          EXPECTED_CODEX_VERSION: ${{ steps.version.outputs.latest }}
+        run: |
+          docker pull "$IMAGE_REF"
+          docker run --rm \
+            -e EXPECTED_CODEX_VERSION="$EXPECTED_CODEX_VERSION" \
+            "$IMAGE_REF" sh -eu -c '
+              installed_output=$(codex --version)
+              installed_version=$(printf "%s\n" "$installed_output" | awk '"'"'
+                {
+                  for (i = 1; i <= NF; i++) {
+                    if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) {
+                      print $i
+                      exit
+                    }
+                  }
+                }
+              '"'"')
+              test "$installed_version" = "$EXPECTED_CODEX_VERSION" || {
+                echo "Expected Codex $EXPECTED_CODEX_VERSION, got: $installed_output" >&2
+                exit 1
+              }
+              command -v google-chrome >/dev/null
+              google-chrome --version
+              echo "Verified Codex CLI: $installed_output"
+            '
+
+      - name: Summarize pushed image
+        if: steps.version.outputs.drift_detected == 'true'
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          echo "Built, pushed, pulled back, and verified: $IMAGE_REF"
+          echo "Live codex-runner deployment was not changed."
