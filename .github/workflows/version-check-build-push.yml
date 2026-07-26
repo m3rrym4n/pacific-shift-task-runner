@@ -27,7 +27,7 @@ env:
 
 jobs:
   check-build-push:
-    runs-on: [self-hosted, zimaos, codex-runner]
+    runs-on: [self-hosted, zimaos, pacific-shift-task-runner]
     timeout-minutes: 90
     steps:
       - name: Check out current main
@@ -116,8 +116,7 @@ jobs:
                 echo "Expected Codex $EXPECTED_CODEX_VERSION, got: $installed_output" >&2
                 exit 1
               }
-              command -v google-chrome >/dev/null
-              google-chrome --version
+              /opt/google/chrome/chrome --version
               echo "Verified Codex CLI: $installed_output"
             '
 
