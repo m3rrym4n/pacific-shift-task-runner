@@ -121,7 +121,7 @@ def test_detect_quota_exhaustion_via_structured_rate_limits_event():
         ]
     )
 
-    quota = main._detect_quota_exhaustion(output)
+    quota = main._detect_quota_exhaustion(output, exit_code=1)
 
     assert quota is not None
     assert quota.resets_at == "2026-07-11T15:42:00-07:00"
@@ -129,9 +129,12 @@ def test_detect_quota_exhaustion_via_structured_rate_limits_event():
 
 
 def test_detect_quota_exhaustion_via_phrasing_fallback_when_no_structured_event():
-    output = "You've hit your usage limit. Try again in 3h 42m"
+    output = (
+        '{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"You\'ve hit your usage limit. Try again in 3h 42m"}}'
+    )
 
-    quota = main._detect_quota_exhaustion(output)
+    quota = main._detect_quota_exhaustion(output, exit_code=1)
 
     assert quota is not None
     assert quota.resets_at == "3h 42m"
@@ -141,7 +144,7 @@ def test_detect_quota_exhaustion_via_phrasing_fallback_when_no_structured_event(
 def test_detect_quota_exhaustion_ignores_available_usage_limit_resets():
     output = "You have 3 usage limit resets available. Run /usage to use one."
 
-    assert main._detect_quota_exhaustion(output) is None
+    assert main._detect_quota_exhaustion(output, exit_code=1) is None
 
 
 def test_session_id_comes_from_real_thread_started_jsonl_shape():
@@ -156,7 +159,18 @@ def test_session_id_comes_from_real_thread_started_jsonl_shape():
 def test_detect_quota_exhaustion_returns_none_for_genuine_output():
     output = '{"type":"item.completed","item":{"type":"agent_message","text":"all good"}}'
 
-    assert main._detect_quota_exhaustion(output) is None
+    assert main._detect_quota_exhaustion(output, exit_code=1) is None
+
+
+def test_detect_quota_exhaustion_ignores_quota_fixtures_in_tool_output():
+    output = (
+        '{"type":"item.completed","item":{"type":"command_execution",'
+        '"aggregated_output":"You\'ve hit your usage limit. Try again in 3h 42m\\n'
+        '{\\"type\\":\\"token_count\\",\\"rate_limits\\":{\\"primary\\":'
+        '{\\"used_percent\\":100}}}"}}'
+    )
+
+    assert main._detect_quota_exhaustion(output, exit_code=1) is None
 
 
 def test_execute_lifecycle_reports_quota_exceeded_via_structured_event(monkeypatch, tmp_path):
@@ -192,7 +206,8 @@ def test_execute_lifecycle_reports_quota_exceeded_via_phrasing_fallback(monkeypa
     script = tmp_path / "codex"
     script.write_text(
         "#!/bin/sh\n"
-        "printf '%s' \"You've hit your usage limit. Try again in 3h 42m\"\n"
+        "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\","
+        "\"text\":\"You'\\''ve hit your usage limit. Try again in 3h 42m\"}}'\n"
         "exit 1\n"
     )
     script.chmod(0o755)
@@ -211,6 +226,37 @@ def test_execute_lifecycle_reports_quota_exceeded_via_phrasing_fallback(monkeypa
         assert result["status"] == "quota_exceeded"
         assert result["resets_at"] == "3h 42m"
         assert result["quota_auto_resume"] is False
+
+
+def test_successful_tool_output_with_quota_fixtures_is_not_quota_exceeded(monkeypatch, tmp_path):
+    script = tmp_path / "codex"
+    script.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\","
+        "\"aggregated_output\":\"test fixture: You'\\''ve hit your usage limit. Try again in 3h 42m"
+        "\\n{\\\"type\\\":\\\"token_count\\\",\\\"rate_limits\\\":{\\\"primary\\\":"
+        "{\\\"used_percent\\\":100}}}\"}}'\n"
+        "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\","
+        "\"text\":\"All work completed successfully.\"}}'\n"
+        "exit 0\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{__import__('os').environ['PATH']}")
+    main.store = main.ExecutionStore(str(tmp_path))
+
+    with TestClient(main.app) as client:
+        response = client.post("/execute", json={"repo": "owner/repo", "issue_number": 2, "prompt": "fix it"})
+        execution_id = response.json()["execution_id"]
+        for _ in range(100):
+            if client.get(f"/status/{execution_id}").json()["status"] != "running":
+                break
+            asyncio.run(asyncio.sleep(0.01))
+
+        result = client.get(f"/result/{execution_id}").json()
+        assert result["status"] == "completed"
+        assert result["exit_code"] == 0
+        assert result["result"] == "All work completed successfully."
+        assert result["error"] is None
 
 
 def test_resume_failure_logs_explicit_fallback_and_fresh_dispatch_succeeds(monkeypatch, tmp_path):
