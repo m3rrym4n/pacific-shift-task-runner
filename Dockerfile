@@ -7,6 +7,9 @@ ARG TASK_RUNNER_SOURCE_SHA=unknown
 ENV TASK_RUNNER_SOURCE_SHA=${TASK_RUNNER_SOURCE_SHA}
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl

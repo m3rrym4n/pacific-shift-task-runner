@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -231,6 +232,7 @@ def make_service(tmp_path, runner, dockhand=None, **overrides):
             ),
         ],
         poll_interval_seconds=0,
+        github_token="test-token",
     )
     values.update(overrides)
     settings = Settings(**values)
@@ -747,9 +749,11 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     dockhand = FakeDockhand()
     service = make_service(tmp_path, runner, dockhand=dockhand)
     commands = []
+    command_options = []
 
-    async def fake_run_command(command):
+    async def fake_run_command(command, **kwargs):
         commands.append(command)
+        command_options.append(kwargs)
         return "ok"
 
     service._run_command = fake_run_command
@@ -780,9 +784,19 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     assert tasks[0]["repo"] == "owner/repo"
     assert tasks[0]["issue_number"] == 35
     assert tasks[0]["status"] == "completed"
-    assert commands[0][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
-    assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[0]
-    assert commands[1][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
+    assert commands[0][:7] == ["git", "clone", "--depth", "1", "--branch", "main", "--single-branch"]
+    assert commands[0][7] == "https://github.com/m3rrym4n/codex-runner.git"
+    assert command_options[0]["env"]["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert "test-token" not in " ".join(commands[0])
+    source_dir = commands[0][8]
+    assert commands[1][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
+    assert f"context={source_dir}" in commands[1]
+    assert f"dockerfile={source_dir}" in commands[1]
+    assert "context=/app/codex_runner" not in commands[1]
+    assert "dockerfile=/app/codex_runner" not in commands[1]
+    assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[1]
+    assert commands[2][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
+    assert not os.path.exists(os.path.dirname(source_dir))
     assert dockhand.deploys == [("codex-runner", "codex-runner")]
     assert dockhand.pulls == ["zot.lan:5000/codex-runner:0.144.1-abc1234"]
     assert dockhand.volume_checks == [
@@ -796,7 +810,7 @@ async def test_ops_image_forced_deploy_failure_restores_snapshot_and_logs_outcom
     runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
     dockhand = FailingDeployDockhand()
     service = make_service(tmp_path, runner, dockhand=dockhand)
-    service._run_command = lambda command: _async_value("ok")
+    service._run_command = lambda command, **kwargs: _async_value("ok")
     check = OpsImageCheck(
         "codex", "codex", "owner/repo", 54, "zot.lan:5000", "codex-runner",
         "codex-runner", "codex-runner", "pacific-shift-codex-runner-auth",
@@ -816,16 +830,19 @@ async def test_ops_image_forced_deploy_failure_restores_snapshot_and_logs_outcom
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_call", [1, 2], ids=["build", "prune"])
+@pytest.mark.parametrize("failure_call", [1, 2, 3], ids=["clone", "build", "prune"])
 async def test_ops_image_pre_deploy_failures_leave_container_untouched(tmp_path, failure_call):
     runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
     dockhand = FakeDockhand()
     service = make_service(tmp_path, runner, dockhand=dockhand)
     calls = 0
 
-    async def fail_at_selected_command(command):
+    commands = []
+
+    async def fail_at_selected_command(command, **kwargs):
         nonlocal calls
         calls += 1
+        commands.append(command)
         if calls == failure_call:
             raise RuntimeError("forced pre-deploy failure")
         return "ok"
@@ -844,6 +861,8 @@ async def test_ops_image_pre_deploy_failures_leave_container_untouched(tmp_path,
     assert dockhand.pulls == []
     assert dockhand.deploys == []
     assert dockhand.restores == []
+    source_dir = commands[0][-1]
+    assert not os.path.exists(os.path.dirname(source_dir))
 
 
 async def _async_value(value):
@@ -857,7 +876,7 @@ async def test_regular_dispatch_queues_behind_active_ops_rebuild(tmp_path):
     rebuild_started = asyncio.Event()
     finish_rebuild = asyncio.Event()
 
-    async def fake_run_command(command):
+    async def fake_run_command(command, **kwargs):
         rebuild_started.set()
         await finish_rebuild.wait()
         return "ok"
