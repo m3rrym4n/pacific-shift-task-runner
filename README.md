@@ -2,6 +2,17 @@
 
 FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured runner HTTP shims and exposes four MCP tools.
 
+## Why this exists
+
+Most open-source AI coding agent orchestrators — [Bernstein](https://github.com/chernistry/bernstein), [OpenHands](https://github.com/All-Hands-AI/OpenHands), [Microsoft Conductor](https://github.com/microsoft/conductor), and others surveyed in this space — don't document handling coding-agent rate limits as a first-class case. In practice, that's the first thing that actually happens on any sustained run.
+
+Task Runner exists to survive that. It's a self-hosted orchestrator for AI coding agents (Codex today) built around:
+
+- **Per-runner FIFO queues** — one task in flight per runner at a time; later work waits its turn.
+- **Quota-exhaustion detection and resume** — a structured rate-limit response with an ISO 8601 reset time returns the interrupted task to the head of its queue and automatically resumes the same session once the quota clock allows, instead of losing the work or requiring a manual restart.
+- **Session-durable queues** — pending order, halt state, and the active task reference all survive an orchestrator restart.
+- **Human-controlled promotion** — every dispatch traces back to a GitHub issue; `dev` builds automatically, `main`/stable only moves on explicit human action.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -123,7 +134,8 @@ Configure Ops Image checks with `TASK_RUNNER_OPS_IMAGE_CHECKS`:
 The Codex runner exposes `GET /codex/version`, returning installed version,
 latest npm version, and a `drift_detected` boolean. A drift result enqueues an
 internal rebuild job behind any active `codex` work. The job invokes `buildctl`
-through the mounted BuildKit socket, builds `codex_runner` with
+through the mounted BuildKit socket after shallow-cloning the current `main`
+branch of `m3rrym4n/codex-runner`, builds that source with
 `CODEX_VERSION=<target>`, tags the image as
 `<registry>/<repository>:<codex-version>-<repo-short-sha>`, pushes it to Zot,
 runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, snapshots the
