@@ -1,5 +1,9 @@
 import asyncio
+import base64
+import json
 import logging
+import os
+import tempfile
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -52,7 +56,7 @@ class TaskService:
         self._scheduler_jobs: set[asyncio.Task] = set()
         self._internal_ops_jobs: dict[str, OpsImageRebuildJob] = {}
         self._queue_lock = asyncio.Lock()
-        self._runner_queues = {name: RunnerQueue() for name in settings.runners}
+        self._repo_queues = {repo.repo: RunnerQueue() for repo in settings.repos}
         self.logger = logging.getLogger(__name__)
 
     def start_scheduler(self) -> None:
@@ -83,76 +87,67 @@ class TaskService:
 
     def resume_running_tasks(self) -> None:
         persisted = self.database.load_runner_queues()
-        for runner_name, state in persisted.items():
-            if runner_name not in self.settings.runners:
-                self.logger.warning("Ignoring persisted queue for unconfigured runner '%s'", runner_name)
+        # Current rows are keyed by repo. Legacy rows were keyed by runner, so
+        # distribute their task IDs by the task's persisted repo during migration.
+        for key, state in persisted.items():
+            task_ids = ([state["active_task_id"]] if state["active_task_id"] else []) + state["pending"]
+            if not task_ids and key in self._repo_queues:
+                queue = self._repo_queues[key]
+                queue.halt_state = state["halt_state"]
+                queue.halt_reason = state["halt_reason"]
+                queue.resumes_at = state["resumes_at"]
                 continue
-            self._runner_queues[runner_name] = RunnerQueue(
-                pending=deque(state["pending"]),
-                active_task_id=state["active_task_id"],
-                halt_state=state["halt_state"],
-                halt_reason=state["halt_reason"],
-                resumes_at=state["resumes_at"],
-            )
+            grouped: dict[str, list[str]] = {}
+            for task_id in task_ids:
+                task = self.database.get(task_id)
+                if task:
+                    grouped.setdefault(task["repo"], []).append(task_id)
+            for repo, ids in grouped.items():
+                queue = self._repo_queues.setdefault(repo, RunnerQueue())
+                active = state["active_task_id"] if state["active_task_id"] in ids else None
+                queue.active_task_id = active
+                queue.pending.extend(task_id for task_id in ids if task_id != active)
+                queue.halt_state = state["halt_state"]
+                queue.halt_reason = state["halt_reason"]
+                queue.resumes_at = state["resumes_at"]
+                self._persist_queue(repo, queue)
+            if grouped and key not in grouped:
+                self.database.delete_runner_queue(key)
         represented = {
             task_id
-            for queue in self._runner_queues.values()
+            for queue in self._repo_queues.values()
             for task_id in ([queue.active_task_id] if queue.active_task_id else [])
         }
-        # Backward compatibility for databases created before queue persistence:
-        # preserve the previous behavior of reconciling remote running executions.
         for task in self.database.list():
-            if task["status"] == "running" and task.get("execution_id") and task["id"] not in represented:
-                queue = self._runner_queues.setdefault(task["runner"], RunnerQueue())
+            if task["status"] == "running" and task["id"] not in represented:
+                queue = self._repo_queues.setdefault(task["repo"], RunnerQueue())
                 if queue.active_task_id is None:
                     queue.active_task_id = task["id"]
-                    self._persist_queue(task["runner"], queue)
-        for runner_name, queue in self._runner_queues.items():
+                    self._persist_queue(task["repo"], queue)
+        for repo, queue in self._repo_queues.items():
             if queue.active_task_id:
-                job = asyncio.create_task(self._reconcile_active_task(runner_name, queue.active_task_id))
-                self._register_queue_job(job, runner_name)
+                job = asyncio.create_task(self._process_repo_task(repo, queue.active_task_id))
+                self._register_queue_job(job, repo)
             elif queue.halt_state == "quota_halted" and queue.resumes_at:
                 resume_time = self._parse_resume_time(queue.resumes_at)
                 if resume_time:
-                    job = asyncio.create_task(self._resume_quota_halted_queue(runner_name, resume_time))
+                    job = asyncio.create_task(self._resume_quota_halted_queue(repo, resume_time))
                     self._jobs.add(job)
                     job.add_done_callback(self._jobs.discard)
-            elif queue.halt_state is None and queue.pending:
-                job = asyncio.create_task(self._process_runner_queue(runner_name))
-                self._register_queue_job(job, runner_name)
+        schedule_job = asyncio.create_task(self._schedule_eligible())
+        self._jobs.add(schedule_job)
+        schedule_job.add_done_callback(self._jobs.discard)
 
-    def _register_queue_job(self, job: asyncio.Task, runner_name: str) -> None:
-        setattr(job, "_task_runner_runner_name", runner_name)
+    def _register_queue_job(self, job: asyncio.Task, repo: str) -> None:
+        setattr(job, "_task_runner_repo", repo)
         self._jobs.add(job)
         job.add_done_callback(self._jobs.discard)
 
-    def _persist_queue(self, runner_name: str, queue: RunnerQueue) -> None:
+    def _persist_queue(self, repo: str, queue: RunnerQueue) -> None:
         self.database.save_runner_queue(
-            runner_name, list(queue.pending), queue.active_task_id,
+            repo, list(queue.pending), queue.active_task_id,
             queue.halt_state, queue.halt_reason, queue.resumes_at,
         )
-
-    async def _reconcile_active_task(self, runner_name: str, task_id: str) -> None:
-        task = self.database.get(task_id)
-        if task and task.get("status") == "running" and task.get("execution_id"):
-            self.logger.info("Reconciling active task %s with execution %s", task_id, task["execution_id"])
-            await self._resume_monitor(task_id, task["runner_url"], task["execution_id"])
-        else:
-            reason = "Active task could not be reconciled after restart: no remote execution reference."
-            if task:
-                self.database.update(task_id, status="failed", error=reason, completed_at=utcnow())
-            self.logger.error("Runner queue '%s' halted: %s", runner_name, reason)
-        async with self._queue_lock:
-            queue = self._runner_queues[runner_name]
-            task = self.database.get(task_id) or {}
-            if task.get("status") != "completed":
-                queue.halt_state = "halted"
-                queue.halt_reason = task.get("error") or "Reconciled active task did not complete."
-            queue.active_task_id = None
-            self._persist_queue(runner_name, queue)
-            should_continue = queue.halt_state is None and bool(queue.pending)
-        if should_continue:
-            await self._process_runner_queue(runner_name)
 
     async def stop_scheduler(self) -> None:
         if not self._scheduler_jobs:
@@ -201,22 +196,16 @@ class TaskService:
         if "/" not in repo or issue_number < 1:
             raise ValueError("repo must be owner/name and issue_number must be positive")
         task_id = str(uuid.uuid4())
-        self.database.create_task(task_id, repo, issue_number, runner_name, self.settings.runners[runner_name])
+        self.database.create_task(task_id, repo, issue_number, runner_name, "")
         async with self._queue_lock:
-            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+            queue = self._repo_queues.setdefault(repo, RunnerQueue())
             queue.pending.append(task_id)
-            self._persist_queue(runner_name, queue)
+            self._persist_queue(repo, queue)
             queue_length = len(queue.pending) + (1 if queue.active_task_id else 0)
             position = queue_length - 1
-            status = "queued"
-            if queue.halt_state is None and not queue.active_task_id and queue.pending[0] == task_id:
-                status = "running"
-            if queue.halt_state is None and not self._queue_worker_running(runner_name):
-                job = asyncio.create_task(self._process_runner_queue(runner_name))
-                setattr(job, "_task_runner_runner_name", runner_name)
-                self._jobs.add(job)
-                job.add_done_callback(self._jobs.discard)
+            status = "running" if self._can_admit(repo) and queue.pending[0] == task_id else "queued"
             resumes_at = queue.resumes_at if queue.halt_state == "quota_halted" else None
+        await self._schedule_eligible()
         receipt = {
             "task_id": task_id,
             "status": status,
@@ -238,40 +227,40 @@ class TaskService:
         )
 
     def list_repo_configs(self) -> list[dict[str, Any]]:
-        return [asdict(repo) for repo in self.settings.repos]
+        values = []
+        for repo in self.settings.repos:
+            value = asdict(repo)
+            value["mcp_servers"] = dict(repo.mcp_servers)
+            values.append(value)
+        return values
 
-    def _queue_worker_running(self, runner_name: str) -> bool:
-        return any(
-            not job.done() and getattr(job, "_task_runner_runner_name", None) == runner_name
-            for job in self._jobs
-        )
+    def _can_admit(self, repo: str) -> bool:
+        queue = self._repo_queues[repo]
+        active = sum(bool(item.active_task_id) for item in self._repo_queues.values())
+        return queue.halt_state is None and queue.active_task_id is None and active < self.settings.max_concurrent_containers
 
-    async def clear_runner_halt(self, runner_name: str) -> dict[str, Any]:
-        if runner_name not in self.settings.runners:
-            available = ", ".join(sorted(self.settings.runners)) or "none"
-            raise ValueError(f"Unknown runner '{runner_name}'. Available runners: {available}")
+    async def clear_runner_halt(self, repo: str) -> dict[str, Any]:
+        if repo not in self._repo_queues:
+            available = ", ".join(sorted(self._repo_queues)) or "none"
+            raise ValueError(f"Unknown repo '{repo}'. Available repos: {available}")
         async with self._queue_lock:
-            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+            queue = self._repo_queues.setdefault(repo, RunnerQueue())
             previous_halt_state = queue.halt_state
             if previous_halt_state is None:
                 return {
-                    "runner": runner_name,
+                    "repo": repo,
                     "status": "not_halted",
                     "pending_count": len(queue.pending),
                 }
             queue.halt_state = None
             queue.halt_reason = None
             queue.resumes_at = None
-            self._persist_queue(runner_name, queue)
-            if not queue.active_task_id and queue.pending and not self._queue_worker_running(runner_name):
-                job = asyncio.create_task(self._process_runner_queue(runner_name))
-                setattr(job, "_task_runner_runner_name", runner_name)
-                self._jobs.add(job)
-                job.add_done_callback(self._jobs.discard)
+            self._persist_queue(repo, queue)
             pending_count = len(queue.pending)
-        self.logger.info("Runner queue '%s' halt cleared manually", runner_name)
+        await self._schedule_eligible()
+        self.logger.info("Repo queue '%s' halt cleared manually", repo)
         return {
-            "runner": runner_name,
+            "repo": repo,
             "status": "resumed",
             "previous_halt_state": previous_halt_state,
             "pending_count": pending_count,
@@ -279,9 +268,9 @@ class TaskService:
 
     async def cancel_queued_task(self, task_id: str) -> dict[str, Any]:
         task = self._required(task_id)
-        runner_name = task["runner"]
+        repo = task["repo"]
         async with self._queue_lock:
-            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+            queue = self._repo_queues.setdefault(repo, RunnerQueue())
             if queue.active_task_id == task_id:
                 raise ValueError(
                     f"Task '{task_id}' is active and cannot be cancelled as a queued task"
@@ -289,7 +278,7 @@ class TaskService:
             try:
                 queue.pending.remove(task_id)
             except ValueError:
-                raise ValueError(f"Task '{task_id}' is not pending in a runner queue") from None
+                raise ValueError(f"Task '{task_id}' is not pending in a repo queue") from None
             pending_count = len(queue.pending)
             self._internal_ops_jobs.pop(task_id, None)
             self.database.update(
@@ -298,82 +287,95 @@ class TaskService:
                 error="Cancelled while queued before runner execution.",
                 completed_at=utcnow(),
             )
-            self._persist_queue(runner_name, queue)
-        self.logger.info("Cancelled queued task %s on runner '%s'", task_id, runner_name)
+            self._persist_queue(repo, queue)
+        self.logger.info("Cancelled queued task %s for repo '%s'", task_id, repo)
         return {
             "task_id": task_id,
-            "runner": runner_name,
+            "repo": repo,
             "status": "cancelled",
             "pending_count": pending_count,
         }
 
-    async def _process_runner_queue(self, runner_name: str) -> None:
-        while True:
-            async with self._queue_lock:
-                queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                if queue.halt_state is not None or queue.active_task_id or not queue.pending:
+    async def _schedule_eligible(self) -> None:
+        async with self._queue_lock:
+            while sum(bool(q.active_task_id) for q in self._repo_queues.values()) < self.settings.max_concurrent_containers:
+                candidates = [
+                    ((self.database.get(q.pending[0]) or {}).get("created_at", ""), repo)
+                    for repo, q in self._repo_queues.items()
+                    if q.pending and q.active_task_id is None and q.halt_state is None
+                ]
+                if not candidates:
                     return
+                _, repo = min(candidates)
+                queue = self._repo_queues[repo]
                 task_id = queue.pending.popleft()
                 queue.active_task_id = task_id
-                self._persist_queue(runner_name, queue)
-            try:
-                await self._dispatch_or_run_internal(task_id)
-                task = self.database.get(task_id) or {}
-                if task.get("status") != "completed":
-                    resets_at = task.get("resets_at")
-                    resume_time = self._parse_resume_time(resets_at) if resets_at else None
-                    if (
-                        task.get("status") == "quota_exceeded"
-                        and task.get("quota_auto_resume")
-                        and task.get("session_id")
-                        and resume_time is not None
-                    ):
-                        self.logger.warning(
-                            "Runner queue '%s' quota-halted after task %s until %s",
-                            runner_name,
-                            task_id,
-                            resets_at,
-                        )
-                        async with self._queue_lock:
-                            queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                            queue.pending.appendleft(task_id)
-                            queue.halt_state = "quota_halted"
-                            queue.halt_reason = task.get("error") or "Runner quota exceeded."
-                            queue.resumes_at = str(resets_at)
-                            self._persist_queue(runner_name, queue)
-                        resume_job = asyncio.create_task(
-                            self._resume_quota_halted_queue(runner_name, resume_time)
-                        )
-                        self._jobs.add(resume_job)
-                        resume_job.add_done_callback(self._jobs.discard)
-                        return
-                    self.logger.error(
-                        "Runner queue '%s' halted after task %s ended with status '%s': %s",
-                        runner_name,
+                self._persist_queue(repo, queue)
+                job = asyncio.create_task(self._process_repo_task(repo, task_id))
+                self._register_queue_job(job, repo)
+
+    async def _process_repo_task(self, repo: str, task_id: str) -> None:
+        try:
+            await self._dispatch_or_run_internal(task_id)
+            task = self.database.get(task_id) or {}
+            if task.get("status") != "completed":
+                resets_at = task.get("resets_at")
+                resume_time = self._parse_resume_time(resets_at) if resets_at else None
+                if (
+                    task.get("status") == "quota_exceeded"
+                    and task.get("quota_auto_resume")
+                    and task.get("session_id")
+                    and resume_time is not None
+                ):
+                    self.logger.warning(
+                        "Repo queue '%s' quota-halted after task %s until %s",
+                        repo,
                         task_id,
-                        task.get("status"),
-                        task.get("error") or "no error detail recorded",
+                        resets_at,
                     )
                     async with self._queue_lock:
-                        queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                        queue.halt_state = "halted"
-                        queue.halt_reason = task.get("error") or f"Task ended with status {task.get('status')}"
-                        self._persist_queue(runner_name, queue)
+                        queue = self._repo_queues.setdefault(repo, RunnerQueue())
+                        queue.pending.appendleft(task_id)
+                        queue.halt_state = "quota_halted"
+                        queue.halt_reason = task.get("error") or "Runner quota exceeded."
+                        queue.resumes_at = str(resets_at)
+                        self._persist_queue(repo, queue)
+                    resume_job = asyncio.create_task(
+                        self._resume_quota_halted_queue(repo, resume_time)
+                    )
+                    self._jobs.add(resume_job)
+                    resume_job.add_done_callback(self._jobs.discard)
                     return
-            except Exception:
-                self.logger.exception("Runner queue '%s' halted while processing task %s", runner_name, task_id)
+                self.logger.error(
+                    "Repo queue '%s' halted after task %s ended with status '%s': %s",
+                    repo,
+                    task_id,
+                    task.get("status"),
+                    task.get("error") or "no error detail recorded",
+                )
                 async with self._queue_lock:
-                    queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                    queue = self._repo_queues.setdefault(repo, RunnerQueue())
                     queue.halt_state = "halted"
-                    queue.halt_reason = f"Exception while processing task {task_id}"
-                    self._persist_queue(runner_name, queue)
+                    queue.halt_reason = (
+                        task.get("error") or f"Task ended with status {task.get('status')}"
+                    )
+                    self._persist_queue(repo, queue)
                 return
-            finally:
-                async with self._queue_lock:
-                    queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
-                    if queue.active_task_id == task_id:
-                        queue.active_task_id = None
-                        self._persist_queue(runner_name, queue)
+        except Exception:
+            self.logger.exception("Repo queue '%s' halted while processing task %s", repo, task_id)
+            async with self._queue_lock:
+                queue = self._repo_queues.setdefault(repo, RunnerQueue())
+                queue.halt_state = "halted"
+                queue.halt_reason = f"Exception while processing task {task_id}"
+                self._persist_queue(repo, queue)
+            return
+        finally:
+            async with self._queue_lock:
+                queue = self._repo_queues.setdefault(repo, RunnerQueue())
+                if queue.active_task_id == task_id:
+                    queue.active_task_id = None
+                    self._persist_queue(repo, queue)
+            await self._schedule_eligible()
 
     @staticmethod
     def _parse_resume_time(value: str) -> datetime | None:
@@ -385,23 +387,23 @@ class TaskService:
             return None
         return parsed
 
-    async def _resume_quota_halted_queue(self, runner_name: str, resume_time: datetime) -> None:
+    async def _resume_quota_halted_queue(self, repo: str, resume_time: datetime) -> None:
         delay = max(0.0, (resume_time.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds())
         await asyncio.sleep(delay)
         while True:
             async with self._queue_lock:
-                queue = self._runner_queues.setdefault(runner_name, RunnerQueue())
+                queue = self._repo_queues.setdefault(repo, RunnerQueue())
                 if queue.halt_state != "quota_halted":
                     return
                 if queue.active_task_id is None:
                     queue.halt_state = None
                     queue.halt_reason = None
                     queue.resumes_at = None
-                    self._persist_queue(runner_name, queue)
+                    self._persist_queue(repo, queue)
                     break
             await asyncio.sleep(0)
-        self.logger.info("Runner queue '%s' resumed after quota reset", runner_name)
-        await self._process_runner_queue(runner_name)
+        self.logger.info("Repo queue '%s' resumed after quota reset", repo)
+        await self._schedule_eligible()
 
     async def _dispatch_or_run_internal(self, task_id: str) -> None:
         ops_job = self._internal_ops_jobs.get(task_id)
@@ -413,7 +415,42 @@ class TaskService:
     async def _dispatch(self, task_id: str) -> None:
         task = self.database.get(task_id)
         assert task is not None
+        managed_container = bool(task.get("runner_container"))
+        container_name = task.get("runner_container") or f"task-runner-{task_id[:12]}"
+        runner_url: str | None = task.get("runner_url") or None
         try:
+            if task["status"] == "running" and runner_url and task.get("execution_id"):
+                await self._resume_monitor(task_id, runner_url, task["execution_id"])
+                return
+            if self.dockhand is None:
+                raise RuntimeError("Dockhand runner lifecycle capability is not configured")
+            repo_config = self.get_repo_config(task["repo"])
+            environment = {
+                "TASK_RUNNER_TASK_ID": task_id,
+                "TASK_RUNNER_TARGET_REPO": task["repo"],
+            }
+            if repo_config.model:
+                environment["CODEX_RUNNER_MODEL"] = repo_config.model
+            if repo_config.mcp_servers:
+                environment["CODEX_RUNNER_MCP_SERVERS"] = json.dumps(dict(repo_config.mcp_servers))
+            self.database.update(task_id, status="spawning", runner_container=container_name)
+            managed_container = True
+            runner_url = await self.dockhand.spawn_runner(
+                name=container_name,
+                image=self.settings.runner_image,
+                auth_volume=self.settings.runner_auth_volume,
+                network=self.settings.runner_network,
+                environment=environment,
+                port=self.settings.runner_port,
+            )
+            wait_until_ready = getattr(self.runner, "wait_until_ready", None)
+            if wait_until_ready is not None:
+                await wait_until_ready(
+                    runner_url,
+                    self.settings.dockhand_verify_timeout_seconds,
+                    self.settings.dockhand_verify_interval_seconds,
+                )
+            self.database.update(task_id, runner_url=runner_url)
             if task["status"] == "quota_exceeded" and task.get("session_id"):
                 prompt = task.get("prompt") or ""
                 self.logger.info(
@@ -423,21 +460,38 @@ class TaskService:
                 )
                 self.database.update(task_id, status="dispatching", completed_at=None)
                 execution_id = await self.runner.resume(
-                    task["runner_url"], task["repo"], task["issue_number"], prompt, task["session_id"]
+                    runner_url, task["repo"], task["issue_number"], prompt, task["session_id"]
                 )
             else:
                 agents, title, body = await self.github.get_context(task["repo"], task["issue_number"])
                 prompt = self.build_prompt(task["repo"], task["issue_number"], agents, title, body)
                 self.database.update(task_id, status="dispatching", prompt=prompt, started_at=utcnow())
                 execution_id = await self.runner.execute(
-                    task["runner_url"], task["repo"], task["issue_number"], prompt
+                    runner_url, task["repo"], task["issue_number"], prompt
                 )
             self.database.update(task_id, status="running", execution_id=execution_id)
-            await self._monitor_with_timeout(task_id, task["runner_url"], execution_id, self.settings.timeout_seconds)
+            await self._monitor_with_timeout(task_id, runner_url, execution_id, self.settings.timeout_seconds)
         except asyncio.TimeoutError:
-            await self._record_timeout(task_id, task["runner_url"])
+            if runner_url:
+                await self._record_timeout(task_id, runner_url)
+            else:
+                self.database.update(task_id, status="timeout", error="Runner spawn timed out.", completed_at=utcnow())
         except Exception as exc:
             self.database.update(task_id, status="failed", error=f"{type(exc).__name__}: {exc}", completed_at=utcnow())
+        finally:
+            if self.dockhand is not None and managed_container:
+                try:
+                    await self.dockhand.destroy_runner(container_name)
+                except Exception as exc:
+                    current = self.database.get(task_id) or {}
+                    cleanup_error = f"Runner cleanup failed: {type(exc).__name__}: {exc}"
+                    prior = current.get("error")
+                    self.database.update(
+                        task_id,
+                        status="failed",
+                        error=f"{prior}; {cleanup_error}" if prior else cleanup_error,
+                        completed_at=utcnow(),
+                    )
 
     async def _run_ops_image_rebuild(self, task_id: str, job: OpsImageRebuildJob) -> None:
         check = job.check
@@ -470,23 +524,47 @@ class TaskService:
                     f"Container '{check.start_container}' is not configured with required volume '{check.auth_volume}'"
                 )
             log_parts.append(f"Verified required auth volume before deploy: {check.auth_volume}")
-            build_command = [
-                "buildctl",
-                "--addr",
-                check.buildkit_addr,
-                "build",
-                "--frontend",
-                "dockerfile.v0",
-                "--local",
-                "context=/app/codex_runner",
-                "--local",
-                "dockerfile=/app/codex_runner",
-                "--opt",
-                f"build-arg:CODEX_VERSION={job.target_version}",
-                "--output",
-                f"type=image,name={image},push=true",
-            ]
-            log_parts.append(await self._run_command(build_command))
+            if not self.settings.github_token:
+                raise RuntimeError("GITHUB_TOKEN is required to clone the codex-runner source")
+            credentials = base64.b64encode(
+                f"x-access-token:{self.settings.github_token}".encode()
+            ).decode()
+            git_env = {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credentials}",
+            }
+            with tempfile.TemporaryDirectory(prefix="codex-runner-build-") as workspace:
+                source_dir = os.path.join(workspace, "codex-runner")
+                clone_command = [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    "main",
+                    "--single-branch",
+                    "https://github.com/m3rrym4n/codex-runner.git",
+                    source_dir,
+                ]
+                log_parts.append(await self._run_command(clone_command, env=git_env))
+                build_command = [
+                    "buildctl",
+                    "--addr",
+                    check.buildkit_addr,
+                    "build",
+                    "--frontend",
+                    "dockerfile.v0",
+                    "--local",
+                    f"context={source_dir}",
+                    "--local",
+                    f"dockerfile={source_dir}",
+                    "--opt",
+                    f"build-arg:CODEX_VERSION={job.target_version}",
+                    "--output",
+                    f"type=image,name={image},push=true",
+                ]
+                log_parts.append(await self._run_command(build_command))
             prune_command = [
                 "python",
                 "/app/scripts/prune_zot_image_tags.py",
@@ -564,11 +642,12 @@ class TaskService:
         finally:
             self._internal_ops_jobs.pop(task_id, None)
 
-    async def _run_command(self, command: list[str]) -> str:
+    async def _run_command(self, command: list[str], env: dict[str, str] | None = None) -> str:
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=None if env is None else {**os.environ, **env},
         )
         stdout, _ = await process.communicate()
         output = stdout.decode("utf-8", errors="replace")
@@ -711,7 +790,10 @@ has a durable written reference in the normal task log/result model.
             if cutoff is None or created_at.timestamp() >= cutoff:
                 matching.append(task)
 
-        running_count = sum(task["status"] in {"queued", "dispatching", "running"} for task in matching)
+        running_count = sum(
+            task["status"] in {"queued", "spawning", "dispatching", "running"}
+            for task in matching
+        )
         selected = matching[offset : offset + limit if limit is not None else None]
         keys = (
             "id", "repo", "issue_number", "runner", "status", "created_at", "completed_at",
@@ -720,7 +802,7 @@ has a durable written reference in the normal task log/result model.
         tasks = []
         for task in selected:
             item = {key: task[key] for key in keys}
-            if item["status"] in {"queued", "dispatching"}:
+            if item["status"] in {"queued", "spawning", "dispatching"}:
                 item["status"] = "running"
             tasks.append(item)
         return {"tasks": tasks, "running_count": running_count}
@@ -728,13 +810,13 @@ has a durable written reference in the normal task log/result model.
     async def get_queue_states(self) -> dict[str, dict[str, Any]]:
         async with self._queue_lock:
             return {
-                runner_name: {
+                repo: {
                     "active_task_id": queue.active_task_id,
                     "pending": list(queue.pending),
                     "halt_state": queue.halt_state,
                     "resumes_at": queue.resumes_at,
                 }
-                for runner_name, queue in self._runner_queues.items()
+                for repo, queue in self._repo_queues.items()
             }
 
     async def deploy_container_swap(self, stop_container: str, start_container: str) -> ContainerDeployResult:
@@ -765,14 +847,10 @@ has a durable written reference in the normal task log/result model.
         )
         self._internal_ops_jobs[task_id] = OpsImageRebuildJob(ops_check, installed, latest)
         async with self._queue_lock:
-            queue = self._runner_queues.setdefault(ops_check.runner, RunnerQueue())
+            queue = self._repo_queues.setdefault(ops_check.repo, RunnerQueue())
             queue.pending.append(task_id)
-            self._persist_queue(ops_check.runner, queue)
-            if queue.halt_state is None and not self._queue_worker_running(ops_check.runner):
-                job = asyncio.create_task(self._process_runner_queue(ops_check.runner))
-                setattr(job, "_task_runner_runner_name", ops_check.runner)
-                self._jobs.add(job)
-                job.add_done_callback(self._jobs.discard)
+            self._persist_queue(ops_check.repo, queue)
+        await self._schedule_eligible()
         return True
 
     def _required(self, task_id: str) -> dict[str, Any]:

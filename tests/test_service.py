@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -34,6 +35,9 @@ class FakeDockhand:
         self.deploys = []
         self.pulls = []
         self.restores = []
+        self.spawned = []
+        self.destroyed = []
+        self.url_by_repo = {}
         self.snapshot = ContainerSnapshot(
             "codex-runner",
             "zot.lan:5000/codex-runner:old",
@@ -43,6 +47,14 @@ class FakeDockhand:
     async def container_uses_volume(self, container, volume_name):
         self.volume_checks.append((container, volume_name))
         return self.volume_present
+
+    async def spawn_runner(self, **kwargs):
+        self.spawned.append(kwargs)
+        repo = kwargs["environment"]["TASK_RUNNER_TARGET_REPO"]
+        return self.url_by_repo.get(repo, f"http://{kwargs['name']}:7000")
+
+    async def destroy_runner(self, name):
+        self.destroyed.append(name)
 
     async def deploy_container_swap(self, stop_container, start_container):
         self.deploys.append((stop_container, start_container))
@@ -231,13 +243,21 @@ def make_service(tmp_path, runner, dockhand=None, **overrides):
             ),
         ],
         poll_interval_seconds=0,
+        github_token="test-token",
     )
     values.update(overrides)
     settings = Settings(**values)
     database = Database(settings.database_path)
     database.initialize()
     github = FakeGitHub()
-    service = TaskService(settings, database, github, runner, dockhand)
+    lifecycle = dockhand or FakeDockhand()
+    if isinstance(lifecycle, FakeDockhand):
+        lifecycle.url_by_repo = {
+            repo.repo: settings.runners[repo.runner]
+            for repo in settings.repos
+            if repo.runner in settings.runners
+        }
+    service = TaskService(settings, database, github, runner, lifecycle)
     service.fake_github = github
     return service
 
@@ -270,6 +290,18 @@ def test_settings_reads_dockhand_configuration(monkeypatch):
     assert settings.dockhand_verify_interval_seconds == 3
 
 
+def test_settings_reads_configurable_global_container_cap(monkeypatch):
+    monkeypatch.setenv("TASK_RUNNER_MAX_CONCURRENT_CONTAINERS", "2")
+
+    assert Settings.from_env().max_concurrent_containers == 2
+    assert Settings().max_concurrent_containers == 3
+
+
+def test_settings_rejects_non_positive_global_container_cap():
+    with pytest.raises(ValueError, match="MAX_CONCURRENT_CONTAINERS"):
+        Settings(max_concurrent_containers=0)
+
+
 def test_settings_reads_repo_registry(monkeypatch):
     monkeypatch.setenv(
         "TASK_RUNNER_REPOS",
@@ -286,6 +318,20 @@ def test_settings_reads_repo_registry(monkeypatch):
             DeployTarget("app", "app-data", 8000, human_promoted_only=True),
         )
     ]
+
+
+def test_repo_registry_accepts_spawn_time_model_and_mcp_configuration(monkeypatch):
+    monkeypatch.setenv(
+        "TASK_RUNNER_REPOS",
+        '[{"repo":"owner/repo","runner":"codex","model":"gpt-test",'
+        '"mcp_servers":{"one":"http://one:7001/mcp"},'
+        '"dev":{"container":"dev","volume":"dev-data","port":1},'
+        '"main":{"container":"main","volume":"main-data","port":2}}]',
+    )
+
+    repo = Settings.from_env().repos[0]
+    assert repo.model == "gpt-test"
+    assert dict(repo.mcp_servers) == {"one": "http://one:7001/mcp"}
 
 
 @pytest.mark.parametrize(
@@ -345,6 +391,9 @@ async def test_real_dispatch_lifecycle_and_tools(tmp_path):
     assert service.get_task_result(task_id)["result"] == "structured report"
     assert service.get_task_log(task_id)["log"] == "abc"
     assert service.list_tasks()[0]["status"] == "completed"
+    assert len(service.dockhand.spawned) == 1
+    assert service.dockhand.spawned[0]["auth_volume"] == "pacific-shift-codex-runner-auth"
+    assert service.dockhand.destroyed == [service.dockhand.spawned[0]["name"]]
 
 
 @pytest.mark.asyncio
@@ -396,14 +445,19 @@ async def test_startup_restores_pending_fifo_and_processes_in_order(tmp_path):
     database.save_runner_queue("codex", ["task-1", "task-2"], None, None, None, None)
 
     runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed", "completed"]})
-    restarted = TaskService(service.settings, database, FakeGitHub(), runner)
+    dockhand = FakeDockhand()
+    dockhand.url_by_repo = {"owner/repo": "http://runner"}
+    restarted = TaskService(service.settings, database, FakeGitHub(), runner, dockhand)
     restarted.resume_running_tasks()
-    await asyncio.gather(*restarted._jobs)
+    for _ in range(100):
+        if restarted.get_task_result("task-2")["status"] == "completed":
+            break
+        await asyncio.sleep(0.001)
 
     assert [execution[2] for execution in runner.executions] == [2, 3]
     assert restarted.get_task_result("task-1")["status"] == "completed"
     assert restarted.get_task_result("task-2")["status"] == "completed"
-    assert (await restarted.get_queue_states())["codex"]["pending"] == []
+    assert (await restarted.get_queue_states())["owner/repo"]["pending"] == []
 
 
 @pytest.mark.asyncio
@@ -419,7 +473,7 @@ async def test_startup_restores_halt_state_and_does_not_process_pending(tmp_path
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
-    queue = restarted._runner_queues["codex"]
+    queue = restarted._repo_queues["owner/repo"]
     assert list(queue.pending) == ["task-1"]
     assert queue.halt_state == "halted"
     assert queue.halt_reason == "previous task failed"
@@ -436,7 +490,9 @@ async def test_startup_reconciles_active_remote_execution_without_redispatch(tmp
 
     runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed"]})
     runner.current_status_by_execution["execution-1"] = "completed"
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    dockhand = FakeDockhand()
+    dockhand.url_by_repo = {"owner/repo": "http://runner"}
+    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner, dockhand)
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
@@ -459,8 +515,8 @@ async def test_startup_fails_and_halts_active_task_without_execution_reference(t
     await asyncio.gather(*restarted._jobs)
 
     assert restarted.get_task_result("active")["status"] == "failed"
-    assert restarted._runner_queues["codex"].halt_state == "halted"
-    assert list(restarted._runner_queues["codex"].pending) == ["pending"]
+    assert restarted._repo_queues["owner/repo"].halt_state == "halted"
+    assert list(restarted._repo_queues["owner/repo"].pending) == ["pending"]
     assert runner.prompt is None
 
 
@@ -530,7 +586,7 @@ async def test_scheduler_fires_configured_task_without_manual_dispatch(tmp_path)
     assert len(tasks) >= 1
     assert tasks[0]["repo"] == "owner/repo"
     assert tasks[0]["issue_number"] == 2
-    assert tasks[0]["runner"] == "codex"
+    assert tasks[0]["repo"] == "owner/repo"
     assert tasks[0]["status"] == "completed"
 
 
@@ -554,6 +610,8 @@ async def test_busy_runner_returns_queued_position_without_starting_second_task(
     runner.finish.set()
     await asyncio.gather(*service._jobs)
     assert len(runner.executions) == 2
+    assert len(service.dockhand.spawned) == 2
+    assert len(service.dockhand.destroyed) == 2
 
 
 @pytest.mark.asyncio
@@ -568,7 +626,7 @@ async def test_failed_active_item_halts_runner_queue_and_logs(tmp_path, caplog):
     assert service.get_task_result(first["task_id"])["status"] == "failed"
     assert service.get_task_result(second["task_id"])["status"] == "queued"
     assert len(runner.executions) == 1
-    assert "Runner queue 'codex' halted" in caplog.text
+    assert "Repo queue 'owner/repo' halted" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -579,7 +637,7 @@ async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tm
 
     quota_task = await service.run_task("owner/repo", 2, "codex")
     for _ in range(100):
-        if service._runner_queues["codex"].halt_state == "quota_halted":
+        if service._repo_queues["owner/repo"].halt_state == "quota_halted":
             break
         await asyncio.sleep(0.001)
 
@@ -588,8 +646,8 @@ async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tm
     quota_result = service.get_task_result(quota_task["task_id"])
     assert quota_result["status"] == "quota_exceeded"
     assert quota_result["resets_at"] == resets_at
-    assert service._runner_queues["codex"].halt_state == "quota_halted"
-    assert service._runner_queues["codex"].resumes_at == resets_at
+    assert service._repo_queues["owner/repo"].halt_state == "quota_halted"
+    assert service._repo_queues["owner/repo"].resumes_at == resets_at
     assert queued["status"] == "queued"
     assert queued["position"] == 1
     assert queued["queue_length"] == 2
@@ -603,9 +661,46 @@ async def test_quota_halt_receipt_includes_resume_time_and_queue_auto_resumes(tm
 
     assert service.get_task_result(queued["task_id"])["status"] == "completed"
     assert service.get_task_result(quota_task["task_id"])["status"] == "completed"
-    assert service._runner_queues["codex"].halt_state is None
+    assert service._repo_queues["owner/repo"].halt_state is None
     assert len(runner.executions) == 3
     assert runner.executions[1][3] == "session-1"
+    assert len(service.dockhand.spawned) == 3
+    assert len(service.dockhand.destroyed) == 3
+
+
+@pytest.mark.asyncio
+async def test_global_container_cap_queues_third_repo_until_slot_frees(tmp_path):
+    runner = BlockingRunner()
+    target = DeployTarget("dev", "dev-data", 8001)
+    repos = [
+        RepoConfig(f"owner/repo-{index}", "codex", target, DeployTarget("main", "data", 8000))
+        for index in range(3)
+    ]
+    service = make_service(
+        tmp_path,
+        runner,
+        repos=repos,
+        max_concurrent_containers=2,
+        poll_interval_seconds=0.001,
+    )
+
+    receipts = [
+        await service.run_task(repo.repo, index + 1, "codex")
+        for index, repo in enumerate(repos)
+    ]
+    for _ in range(100):
+        if len(service.dockhand.spawned) == 2:
+            break
+        await asyncio.sleep(0.001)
+
+    assert len(service.dockhand.spawned) == 2
+    assert receipts[2]["status"] == "queued"
+    assert service.get_task_result(receipts[2]["task_id"])["status"] == "queued"
+
+    runner.finish.set()
+    await asyncio.gather(*service._jobs)
+    assert len(service.dockhand.spawned) == 3
+    assert service.get_task_result(receipts[2]["task_id"])["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -628,7 +723,7 @@ async def test_phrasing_only_quota_detection_is_a_generic_halt(tmp_path):
     await asyncio.gather(*service._jobs)
 
     assert service.get_task_result(task["task_id"])["status"] == "quota_exceeded"
-    assert service._runner_queues["codex"].halt_state == "halted"
+    assert service._repo_queues["owner/repo"].halt_state == "halted"
 
 
 @pytest.mark.asyncio
@@ -643,7 +738,7 @@ async def test_generic_halt_does_not_auto_resume(tmp_path):
 
     assert service.get_task_result(failed["task_id"])["status"] == "failed"
     assert service.get_task_result(queued["task_id"])["status"] == "queued"
-    assert service._runner_queues["codex"].halt_state == "halted"
+    assert service._repo_queues["owner/repo"].halt_state == "halted"
     assert "resumes_at" not in queued
     assert len(runner.executions) == 1
 
@@ -667,7 +762,7 @@ async def test_halted_runner_queue_does_not_block_other_runner(tmp_path, caplog)
     assert service.get_task_result(other["task_id"])["status"] == "completed"
     assert [execution[0] for execution in runner.executions].count("http://codex") == 1
     assert [execution[0] for execution in runner.executions].count("http://gemini") == 1
-    assert "Runner queue 'codex' halted" in caplog.text
+    assert "Repo queue 'owner/repo' halted" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -687,11 +782,11 @@ async def test_clear_halt_resumes_only_selected_runner_without_retrying_failed_i
     gemini_pending = await service.run_task("owner/gemini", 5, "gemini")
     await asyncio.gather(*service._jobs)
 
-    receipt = await service.clear_runner_halt("codex")
+    receipt = await service.clear_runner_halt("owner/repo")
     await asyncio.gather(*service._jobs)
 
     assert receipt == {
-        "runner": "codex",
+        "repo": "owner/repo",
         "status": "resumed",
         "previous_halt_state": "halted",
         "pending_count": 1,
@@ -700,7 +795,7 @@ async def test_clear_halt_resumes_only_selected_runner_without_retrying_failed_i
     assert service.get_task_result(codex_pending["task_id"])["status"] == "completed"
     assert service.get_task_result(gemini_failed["task_id"])["status"] == "failed"
     assert service.get_task_result(gemini_pending["task_id"])["status"] == "queued"
-    assert service._runner_queues["gemini"].halt_state == "halted"
+    assert service._repo_queues["owner/gemini"].halt_state == "halted"
     assert [execution[0] for execution in runner.executions].count("http://codex") == 2
     assert [execution[0] for execution in runner.executions].count("http://gemini") == 1
 
@@ -747,9 +842,11 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     dockhand = FakeDockhand()
     service = make_service(tmp_path, runner, dockhand=dockhand)
     commands = []
+    command_options = []
 
-    async def fake_run_command(command):
+    async def fake_run_command(command, **kwargs):
         commands.append(command)
+        command_options.append(kwargs)
         return "ok"
 
     service._run_command = fake_run_command
@@ -780,9 +877,19 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     assert tasks[0]["repo"] == "owner/repo"
     assert tasks[0]["issue_number"] == 35
     assert tasks[0]["status"] == "completed"
-    assert commands[0][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
-    assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[0]
-    assert commands[1][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
+    assert commands[0][:7] == ["git", "clone", "--depth", "1", "--branch", "main", "--single-branch"]
+    assert commands[0][7] == "https://github.com/m3rrym4n/codex-runner.git"
+    assert command_options[0]["env"]["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert "test-token" not in " ".join(commands[0])
+    source_dir = commands[0][8]
+    assert commands[1][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
+    assert f"context={source_dir}" in commands[1]
+    assert f"dockerfile={source_dir}" in commands[1]
+    assert "context=/app/codex_runner" not in commands[1]
+    assert "dockerfile=/app/codex_runner" not in commands[1]
+    assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[1]
+    assert commands[2][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
+    assert not os.path.exists(os.path.dirname(source_dir))
     assert dockhand.deploys == [("codex-runner", "codex-runner")]
     assert dockhand.pulls == ["zot.lan:5000/codex-runner:0.144.1-abc1234"]
     assert dockhand.volume_checks == [
@@ -796,7 +903,7 @@ async def test_ops_image_forced_deploy_failure_restores_snapshot_and_logs_outcom
     runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
     dockhand = FailingDeployDockhand()
     service = make_service(tmp_path, runner, dockhand=dockhand)
-    service._run_command = lambda command: _async_value("ok")
+    service._run_command = lambda command, **kwargs: _async_value("ok")
     check = OpsImageCheck(
         "codex", "codex", "owner/repo", 54, "zot.lan:5000", "codex-runner",
         "codex-runner", "codex-runner", "pacific-shift-codex-runner-auth",
@@ -816,16 +923,19 @@ async def test_ops_image_forced_deploy_failure_restores_snapshot_and_logs_outcom
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_call", [1, 2], ids=["build", "prune"])
+@pytest.mark.parametrize("failure_call", [1, 2, 3], ids=["clone", "build", "prune"])
 async def test_ops_image_pre_deploy_failures_leave_container_untouched(tmp_path, failure_call):
     runner = FakeRunner(codex_version={"installed": "0.142.5", "latest": "0.144.1", "drift_detected": True})
     dockhand = FakeDockhand()
     service = make_service(tmp_path, runner, dockhand=dockhand)
     calls = 0
 
-    async def fail_at_selected_command(command):
+    commands = []
+
+    async def fail_at_selected_command(command, **kwargs):
         nonlocal calls
         calls += 1
+        commands.append(command)
         if calls == failure_call:
             raise RuntimeError("forced pre-deploy failure")
         return "ok"
@@ -844,6 +954,8 @@ async def test_ops_image_pre_deploy_failures_leave_container_untouched(tmp_path,
     assert dockhand.pulls == []
     assert dockhand.deploys == []
     assert dockhand.restores == []
+    source_dir = commands[0][-1]
+    assert not os.path.exists(os.path.dirname(source_dir))
 
 
 async def _async_value(value):
@@ -857,7 +969,7 @@ async def test_regular_dispatch_queues_behind_active_ops_rebuild(tmp_path):
     rebuild_started = asyncio.Event()
     finish_rebuild = asyncio.Event()
 
-    async def fake_run_command(command):
+    async def fake_run_command(command, **kwargs):
         rebuild_started.set()
         await finish_rebuild.wait()
         return "ok"

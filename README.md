@@ -8,7 +8,7 @@ Most open-source AI coding agent orchestrators — [Bernstein](https://github.co
 
 Task Runner exists to survive that. It's a self-hosted orchestrator for AI coding agents (Codex today) built around:
 
-- **Per-runner FIFO queues** — one task in flight per runner at a time; later work waits its turn.
+- **Per-repository FIFO queues** — one task container per repository at a time, with a configurable global container cap.
 - **Quota-exhaustion detection and resume** — a structured rate-limit response with an ISO 8601 reset time returns the interrupted task to the head of its queue and automatically resumes the same session once the quota clock allows, instead of losing the work or requiring a manual restart.
 - **Session-durable queues** — pending order, halt state, and the active task reference all survive an orchestrator restart.
 - **Human-controlled promotion** — every dispatch traces back to a GitHub issue; `dev` builds automatically, `main`/stable only moves on explicit human action.
@@ -31,6 +31,11 @@ Task Runner exists to survive that. It's a self-hosted orchestrator for AI codin
 | `TASK_RUNNER_DOCKHAND_ENV` | unset | Optional Dockhand environment ID for container deploy operations |
 | `TASK_RUNNER_DOCKHAND_VERIFY_TIMEOUT_SECONDS` | `60` | Maximum time to wait for a started container to verify as running or healthy |
 | `TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS` | `2` | Poll interval while verifying a started container |
+| `TASK_RUNNER_MAX_CONCURRENT_CONTAINERS` | `3` | Global ceiling for simultaneously active per-task runner containers |
+| `TASK_RUNNER_RUNNER_IMAGE` | `codex-runner:latest` | Image used for ephemeral runner containers |
+| `TASK_RUNNER_RUNNER_AUTH_VOLUME` | `pacific-shift-codex-runner-auth` | Shared Codex auth/session volume mounted into each runner |
+| `TASK_RUNNER_RUNNER_PORT` | `7000` | Runner shim port inside the ephemeral container |
+| `TASK_RUNNER_RUNNER_NETWORK` | `bridge` | Docker network mode supplied to Dockhand at container creation |
 | `TASK_RUNNER_SOURCE_SHA` | `unknown` | Source revision baked into the Task Runner image and used in Ops Images tags |
 
 The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
@@ -43,6 +48,9 @@ target and human-promoted `main` target. Targets require `container`, `volume`,
 and a positive integer `port`. Optional `health_path` and `expected_content`
 values override the reusable workflow's generic HTTP check. `health_path`
 defaults to `/` in that workflow when omitted.
+Repositories may also set optional `model` and `mcp_servers` values. Task Runner
+passes those into each spawned container as `CODEX_RUNNER_MODEL` and
+`CODEX_RUNNER_MCP_SERVERS`; runner-side consumption is tracked by issue #86.
 
 The live four-repository configuration is maintained in
 [`deploy/repos.json`](deploy/repos.json). Set the environment variable from the
@@ -59,7 +67,7 @@ mismatches before creating a task row. `pacific-shift-mcp-proxy` is deliberately
 absent because its Home Assistant add-on deployment does not use this container
 target model.
 
-Dockhand configuration is an internal Task Runner capability for Ops Images
+Dockhand configuration is an internal Task Runner capability for ephemeral runner lifecycle and Ops Images
 deploy steps. It is not exposed as an MCP tool. The token must be supplied at
 runtime through `TASK_RUNNER_DOCKHAND_TOKEN` and should be generated under a
 dedicated Task Runner account.
@@ -173,30 +181,31 @@ rebuild the `docker run` invocation below from scratch.
 
 Required endpoints are `POST /execute`, `POST /resume`, `GET /status/{execution_id}`, and `GET /result/{execution_id}`. `POST /resume` accepts the original execution request plus a persisted `session_id`; the Codex runner invokes `codex exec resume` and logs an explicit marker before falling back to a fresh dispatch if resume fails. On timeout the orchestrator also attempts `DELETE /execute/{execution_id}`. Runners should implement that optional endpoint to guarantee remote process termination; otherwise the task is still recorded as `timeout`, with the failed cancellation noted.
 
-## Runner queues
+## Repository queues and ephemeral runners
 
-`run_task` places every issue dispatch into a SQLite-backed FIFO queue for the
-selected runner and returns a receipt with `task_id`, `status`, `position`,
-`queue_length`, and `runner`. Idle runners start the new task immediately with
-position `0`; busy runners keep later tasks queued until earlier work finishes.
-If the active task for a runner fails, times out, or raises during processing,
-that runner's queue halts and leaves pending tasks queued for human inspection.
+`run_task` places every issue dispatch into a SQLite-backed FIFO queue keyed by
+repository and returns a receipt with `task_id`, `status`, `position`,
+`queue_length`, and `runner`. A single scheduler admits the oldest eligible
+repository queue head while enforcing the configured global container cap.
+Each admitted task gets a fresh Dockhand-created runner with the shared auth
+volume. It is stopped and removed after success, failure, timeout, or quota
+exhaustion. A failure halts only that repository's queue.
 If the runner instead reports `quota_exceeded` from a structured rate-limit
 event with a session ID and ISO 8601 `resets_at` timestamp, the interrupted task
 returns to the head of the queue and the queue enters a distinct quota halt.
-Receipts for work added during that halt include `resumes_at`. At that time the
-same task row resumes its Codex session before later pending work starts. Quota
+Receipts for work added during that halt include `resumes_at`. At that time a
+new container resumes the same task row and Codex session before later pending work starts. Quota
 responses without a usable structured reset timestamp remain generic halts.
 Phrasing-only quota detections deliberately do not auto-resume: Codex's relative
 duration text is neither ISO-compatible nor sufficiently reliable to schedule
 unattended work.
-Queues are independent per runner and survive orchestrator restarts, including
+Queues are independent per repository and survive orchestrator restarts, including
 pending order, halt details, quota resume time, and the active task reference.
 At startup an active task with a runner execution ID resumes monitoring that
 same remote execution. If no execution ID was persisted, its remote state is
 unknowable: the task is marked failed and the queue halts for operator review,
 preventing a potentially duplicate dispatch. This is reconciliation, not retry.
-Use the `clear_runner_halt` tool to clear a halt for one runner and resume its
+Use the `clear_runner_halt` tool with a repository name to clear its halt and resume its
 remaining pending items without retrying the failed item. Use
 `cancel_queued_task` to remove and mark one still-pending item as `cancelled`;
 active tasks must instead use the runner shim's execution-cancellation endpoint.
@@ -260,39 +269,3 @@ The repository requires a self-hosted runner labeled `zimaos` and
 `pacific-shift-task-runner`, plus `DOCKHAND_URL` and `DOCKHAND_TOKEN` Actions secrets, before
 the workflow can be dispatched. Runner and token provisioning is managed
 separately from the reusable workflow.
-
-### Dedicated Codex runner
-
-Build and run the non-interactive runner separately from any interactive Codex container. Its Codex authentication is stored in a named volume.
-
-```bash
-docker build -t pacific-shift-codex-runner:latest codex_runner
-docker volume create pacific-shift-codex-runner-auth
-
-docker run --rm -it \
-  -v pacific-shift-codex-runner-auth:/home/codex/.codex \
-  pacific-shift-codex-runner:latest codex login --device-auth
-
-docker run -d \
-  --name codex-runner \
-  --restart unless-stopped \
-  --privileged \
-  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
-  -p 7000:7000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v pacific-shift-codex-runner-auth:/home/codex/.codex \
-  -e 'GITHUB_TOKEN=<redacted>' \
-  pacific-shift-codex-runner:latest
-
-docker exec codex-runner docker version
-docker exec codex-runner docker ps
-curl http://localhost:7000/codex/version
-```
-
-Privileged mode allows Codex's own `workspace-write` sandbox to create and
-configure its nested Linux namespace. The host Docker socket and its group ID
-give the non-root `codex` user access to the host daemon; the image contains
-the Docker CLI and Buildx plugin, but no Docker daemon. Supply `GITHUB_TOKEN`
-at runtime so the dispatched agent can clone, push, and open its PR. Test the runner image with `docker build -t
-pacific-shift-codex-runner:test -f codex_runner/Dockerfile.test codex_runner &&
-docker run --rm pacific-shift-codex-runner:test`.
