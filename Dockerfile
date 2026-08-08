@@ -23,7 +23,8 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY __init__.py main.py ./codex_runner/
+COPY __init__.py main.py configure_mcp.py ./codex_runner/
+COPY entrypoint.sh /usr/local/bin/codex-runner-entrypoint
 
 RUN useradd --create-home --uid 10001 codex \
     && mkdir -p /home/codex/.codex /workspaces \
@@ -31,4 +32,5 @@ RUN useradd --create-home --uid 10001 codex \
 
 USER codex
 EXPOSE 7000
+ENTRYPOINT ["codex-runner-entrypoint"]
 CMD ["uvicorn", "codex_runner.main:app", "--host", "0.0.0.0", "--port", "7000"]

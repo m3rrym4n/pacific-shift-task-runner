@@ -76,6 +76,37 @@ def test_fresh_dispatch_bypasses_approvals_and_sandbox(monkeypatch, tmp_path):
     assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
 
 
+def test_fresh_dispatch_passes_request_model(monkeypatch, tmp_path):
+    captured = {}
+
+    async def capture_command(execution, request, command, fallback_to_fresh=False):
+        captured["command"] = command
+
+    monkeypatch.setattr(main, "_run_command", capture_command)
+    execution = main.Execution(id="fresh", workspace=tmp_path)
+    request = main.ExecuteRequest(repo="owner/repo", prompt="do it", model="gpt-request")
+
+    asyncio.run(main._run(execution, request))
+
+    assert captured["command"][-3:-1] == ["--model", "gpt-request"]
+
+
+def test_fresh_dispatch_uses_container_default_model(monkeypatch, tmp_path):
+    captured = {}
+
+    async def capture_command(execution, request, command, fallback_to_fresh=False):
+        captured["command"] = command
+
+    monkeypatch.setattr(main, "_run_command", capture_command)
+    monkeypatch.setenv("CODEX_RUNNER_MODEL", "gpt-container")
+    execution = main.Execution(id="fresh", workspace=tmp_path)
+    request = main.ExecuteRequest(repo="owner/repo", prompt="do it")
+
+    asyncio.run(main._run(execution, request))
+
+    assert captured["command"][-3:-1] == ["--model", "gpt-container"]
+
+
 def test_resumed_dispatch_bypasses_approvals_and_sandbox(monkeypatch, tmp_path):
     captured = {}
 
@@ -91,6 +122,24 @@ def test_resumed_dispatch_bypasses_approvals_and_sandbox(monkeypatch, tmp_path):
 
     assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
     assert captured["fallback_to_fresh"] is True
+
+
+def test_resumed_dispatch_passes_model(monkeypatch, tmp_path):
+    captured = {}
+
+    async def capture_command(execution, request, command, fallback_to_fresh=False):
+        captured["command"] = command
+
+    monkeypatch.setattr(main, "_run_command", capture_command)
+    execution = main.Execution(id="resume", workspace=tmp_path)
+    request = main.ResumeRequest(
+        repo="owner/repo", prompt="do it", session_id="session-id", model="gpt-resume"
+    )
+
+    asyncio.run(main._run_resume(execution, request))
+
+    session_index = captured["command"].index("session-id")
+    assert captured["command"][session_index - 2 : session_index] == ["--model", "gpt-resume"]
 
 
 def test_version_parser_accepts_codex_cli_output():
