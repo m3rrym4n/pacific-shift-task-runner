@@ -21,6 +21,7 @@ class ExecuteRequest(BaseModel):
     repo: str
     prompt: str
     issue_number: int | None = None
+    model: str | None = None
 
     @field_validator("repo")
     @classmethod
@@ -200,6 +201,10 @@ pause for connector approval.
 """
 
 
+def _model(request: ExecuteRequest) -> str | None:
+    return request.model or os.getenv("CODEX_RUNNER_MODEL")
+
+
 async def _run(execution: Execution, request: ExecuteRequest) -> None:
     command = [
         "codex",
@@ -211,8 +216,10 @@ async def _run(execution: Execution, request: ExecuteRequest) -> None:
         "sandbox_workspace_write.network_access=true",
         "--config",
         "shell_environment_policy.inherit=all",
-        _runner_prompt(request),
     ]
+    if model := _model(request):
+        command += ["--model", model]
+    command.append(_runner_prompt(request))
     await _run_command(execution, request, command)
 
 
@@ -224,6 +231,10 @@ async def _run_resume(execution: Execution, request: ResumeRequest) -> None:
         "--json",
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
+    ]
+    if model := _model(request):
+        command += ["--model", model]
+    command += [
         request.session_id,
         "Continue the interrupted task from where you stopped. Complete the original request.",
     ]
