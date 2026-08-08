@@ -31,6 +31,7 @@ class Database:
                     output_truncated INTEGER NOT NULL DEFAULT 0, error TEXT,
                     resets_at TEXT, session_id TEXT, quota_auto_resume INTEGER NOT NULL DEFAULT 0,
                     branch TEXT, pr_url TEXT,
+                    runner_container TEXT,
                     created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
                 )
             """)
@@ -45,6 +46,8 @@ class Database:
                 db.execute("ALTER TABLE tasks ADD COLUMN branch TEXT")
             if "pr_url" not in columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN pr_url TEXT")
+            if "runner_container" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN runner_container TEXT")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS runner_queue_state (
                     runner TEXT PRIMARY KEY, active_task_id TEXT,
@@ -104,6 +107,12 @@ class Database:
                 (runner, active_task_id, halt_state, halt_reason, resumes_at),
             )
             db.execute("DELETE FROM runner_queue_items WHERE runner=?", (runner,))
+            if pending:
+                placeholders = ",".join("?" for _ in pending)
+                db.execute(
+                    f"DELETE FROM runner_queue_items WHERE task_id IN ({placeholders})",
+                    tuple(pending),
+                )
             db.executemany(
                 "INSERT INTO runner_queue_items (runner,position,task_id) VALUES (?,?,?)",
                 ((runner, position, task_id) for position, task_id in enumerate(pending)),
@@ -122,3 +131,8 @@ class Database:
             row["runner"]: {**dict(row), "pending": pending.get(row["runner"], [])}
             for row in states
         }
+
+    def delete_runner_queue(self, runner: str) -> None:
+        with self._lock, self.connect() as db:
+            db.execute("DELETE FROM runner_queue_items WHERE runner=?", (runner,))
+            db.execute("DELETE FROM runner_queue_state WHERE runner=?", (runner,))

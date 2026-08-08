@@ -38,9 +38,9 @@ async def run_task(repo: str, issue_number: int, runner: str) -> dict:
 
 
 @mcp.tool()
-async def clear_runner_halt(runner: str) -> dict:
-    """Clear one runner queue's halt and resume its remaining pending tasks."""
-    return await service.clear_runner_halt(runner)
+async def clear_runner_halt(repo: str) -> dict:
+    """Clear one repo queue's halt and resume its remaining pending tasks."""
+    return await service.clear_runner_halt(repo)
 
 
 @mcp.tool()
@@ -147,10 +147,10 @@ async def api_queues() -> dict:
     return await service.get_queue_states()
 
 
-@app.post("/api/queues/{runner}/clear-halt")
-async def api_clear_runner_halt(runner: str) -> dict:
+@app.post("/api/queues/{repo:path}/clear-halt")
+async def api_clear_runner_halt(repo: str) -> dict:
     try:
-        return await service.clear_runner_halt(runner)
+        return await service.clear_runner_halt(repo)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
