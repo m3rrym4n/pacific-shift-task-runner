@@ -22,6 +22,7 @@ def test_execute_lifecycle_and_result(monkeypatch, tmp_path):
     )
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}:{__import__('os').environ['PATH']}")
+    monkeypatch.setenv("CODEX_RESOLVED_VERSION", "0.145.0")
     main.store = main.ExecutionStore(str(tmp_path))
 
     with TestClient(main.app) as client:
@@ -37,6 +38,7 @@ def test_execute_lifecycle_and_result(monkeypatch, tmp_path):
         assert result["status"] == "completed"
         assert result["result"] == "structured report"
         assert result["exit_code"] == 0
+        assert result["codex_version"] == "0.145.0"
         assert not any(Path(tmp_path).glob("codex-*-*"))
 
 
@@ -44,6 +46,13 @@ def test_unknown_execution_returns_404():
     main.store = main.ExecutionStore()
     with TestClient(main.app) as client:
         assert client.get("/status/missing").status_code == 404
+
+
+def test_execution_without_spawn_time_version_reports_null(monkeypatch, tmp_path):
+    monkeypatch.delenv("CODEX_RESOLVED_VERSION", raising=False)
+    execution = main.ExecutionStore(str(tmp_path)).create()
+
+    assert execution.codex_version is None
 
 
 def test_repo_validation():
