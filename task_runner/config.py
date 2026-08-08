@@ -50,6 +50,8 @@ class RepoConfig:
     runner: str
     dev: DeployTarget
     main: DeployTarget
+    model: str | None = None
+    mcp_servers: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RepoConfig":
@@ -60,7 +62,16 @@ class RepoConfig:
         runner = _non_empty_string(value.get("runner"), "repo config runner")
         dev = DeployTarget.from_dict(value.get("dev"), "dev")
         main = DeployTarget.from_dict(value.get("main"), "main")
-        return cls(repo, runner, dev, main)
+        model = value.get("model")
+        if model is not None:
+            model = _non_empty_string(model, "repo config model")
+        raw_mcp_servers = value.get("mcp_servers", {})
+        if not isinstance(raw_mcp_servers, dict) or not all(
+            isinstance(name, str) and name.strip() and isinstance(url, str) and url.strip()
+            for name, url in raw_mcp_servers.items()
+        ):
+            raise ValueError("repo config mcp_servers must be an object of name to URL")
+        return cls(repo, runner, dev, main, model, tuple(raw_mcp_servers.items()))
 
 
 def parse_interval_seconds(value: Any) -> float:
@@ -206,6 +217,11 @@ class Settings:
     dockhand_env: int | None = None
     dockhand_verify_timeout_seconds: float = 60
     dockhand_verify_interval_seconds: float = 2
+    max_concurrent_containers: int = 3
+    runner_image: str = "codex-runner:latest"
+    runner_auth_volume: str = "pacific-shift-codex-runner-auth"
+    runner_port: int = 7000
+    runner_network: str = "bridge"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "runners", self.runners or {})
@@ -215,6 +231,16 @@ class Settings:
         repo_names = [repo.repo for repo in self.repos]
         if len(repo_names) != len(set(repo_names)):
             raise ValueError("TASK_RUNNER_REPOS must not contain duplicate repos")
+        if self.max_concurrent_containers < 1:
+            raise ValueError("TASK_RUNNER_MAX_CONCURRENT_CONTAINERS must be a positive integer")
+        if not self.runner_image.strip():
+            raise ValueError("TASK_RUNNER_RUNNER_IMAGE must be a non-empty string")
+        if not self.runner_auth_volume.strip():
+            raise ValueError("TASK_RUNNER_RUNNER_AUTH_VOLUME must be a non-empty string")
+        if self.runner_port < 1:
+            raise ValueError("TASK_RUNNER_RUNNER_PORT must be a positive integer")
+        if not self.runner_network.strip():
+            raise ValueError("TASK_RUNNER_RUNNER_NETWORK must be a non-empty string")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -263,4 +289,13 @@ class Settings:
             dockhand_verify_interval_seconds=float(
                 os.getenv("TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS", "2")
             ),
+            max_concurrent_containers=int(
+                os.getenv("TASK_RUNNER_MAX_CONCURRENT_CONTAINERS", "3")
+            ),
+            runner_image=os.getenv("TASK_RUNNER_RUNNER_IMAGE", "codex-runner:latest"),
+            runner_auth_volume=os.getenv(
+                "TASK_RUNNER_RUNNER_AUTH_VOLUME", "pacific-shift-codex-runner-auth"
+            ),
+            runner_port=int(os.getenv("TASK_RUNNER_RUNNER_PORT", "7000")),
+            runner_network=os.getenv("TASK_RUNNER_RUNNER_NETWORK", "bridge"),
         )

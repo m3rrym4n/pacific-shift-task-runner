@@ -158,7 +158,7 @@ def test_cancel_task_endpoint_matches_service_response_and_maps_errors(monkeypat
 
 def test_clear_runner_halt_endpoint_matches_service_response_and_returns_404(monkeypatch):
     cleared = {
-        "runner": "codex",
+        "repo": "owner/repo",
         "status": "resumed",
         "previous_halt_state": "halted",
         "pending_count": 1,
@@ -168,13 +168,13 @@ def test_clear_runner_halt_endpoint_matches_service_response_and_returns_404(mon
     monkeypatch.setattr(main, "service", rest_service)
     client = TestClient(main.app)
 
-    response = client.post("/api/queues/codex/clear-halt")
+    response = client.post("/api/queues/owner/repo/clear-halt")
 
     assert response.status_code == 200
     assert response.json() == cleared
-    rest_service.clear_runner_halt.assert_awaited_once_with("codex")
-    rest_service.clear_runner_halt.side_effect = ValueError("Unknown runner 'other'")
-    assert client.post("/api/queues/other/clear-halt").status_code == 404
+    rest_service.clear_runner_halt.assert_awaited_once_with("owner/repo")
+    rest_service.clear_runner_halt.side_effect = ValueError("Unknown repo 'other/repo'")
+    assert client.post("/api/queues/other/repo/clear-halt").status_code == 404
 
 
 def test_repo_registry_endpoint_returns_deploy_targets(tmp_path, monkeypatch):
@@ -187,7 +187,7 @@ def test_repo_registry_endpoint_returns_deploy_targets(tmp_path, monkeypatch):
 
 async def wait_for_halt(service):
     for _ in range(100):
-        queue = service._runner_queues["codex"]
+        queue = service._repo_queues["owner/repo"]
         if queue.halt_state == "halted":
             return
         await asyncio.sleep(0.001)
@@ -220,13 +220,13 @@ def test_queues_endpoint_reports_real_pending_position_and_halt_without_side_eff
 
     assert first_response.status_code == 200
     assert first_response.json() == second_response.json() == {
-        "codex": {
+        "owner/repo": {
             "active_task_id": None,
             "pending": [second["task_id"], third["task_id"]],
             "halt_state": "halted",
             "resumes_at": None,
         },
-        "idle": {
+        "owner/gemini": {
             "active_task_id": None,
             "pending": [],
             "halt_state": None,
@@ -239,14 +239,14 @@ def test_queues_endpoint_reports_real_pending_position_and_halt_without_side_eff
 
 def test_queues_endpoint_reports_quota_halt_state(tmp_path, monkeypatch):
     service = make_service(tmp_path, FakeRunner())
-    service._runner_queues["codex"] = RunnerQueue(
+    service._repo_queues["owner/repo"] = RunnerQueue(
         pending=deque(["quota-task", "next-task"]),
         halt_state="quota_halted",
         resumes_at="2026-07-13T01:00:00+00:00",
     )
     monkeypatch.setattr(main, "service", service)
 
-    assert TestClient(main.app).get("/api/queues").json()["codex"] == {
+    assert TestClient(main.app).get("/api/queues").json()["owner/repo"] == {
         "active_task_id": None,
         "pending": ["quota-task", "next-task"],
         "halt_state": "quota_halted",

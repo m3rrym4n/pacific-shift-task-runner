@@ -87,6 +87,33 @@ async def test_deploy_container_swap_accepts_running_container_without_healthche
 
 
 @pytest.mark.asyncio
+async def test_spawn_and_destroy_ephemeral_runner_uses_auth_volume_and_actual_ip():
+    http = FakeHttpClient(
+        [{"State": {"Status": "running", "Running": True},
+          "NetworkSettings": {"IPAddress": "172.17.0.9"}}]
+    )
+    client = DockhandClient("http://dockhand:3003", "dh_test", client=http)
+
+    url = await client.spawn_runner(
+        name="task-runner-abc",
+        image="registry/codex:1",
+        auth_volume="pacific-shift-codex-runner-auth",
+        network="bridge",
+        environment={"TASK_RUNNER_TARGET_REPO": "owner/repo"},
+        port=7000,
+    )
+    await client.destroy_runner("task-runner-abc")
+
+    assert url == "http://172.17.0.9:7000"
+    create = http.calls[0]
+    assert create[2]["json"]["restartPolicy"] == "no"
+    assert create[2]["json"]["volumeBinds"] == [
+        "pacific-shift-codex-runner-auth:/home/codex/.codex:rw"
+    ]
+    assert [call[0] for call in http.calls] == ["POST", "POST", "GET", "POST", "DELETE"]
+
+
+@pytest.mark.asyncio
 async def test_container_uses_volume_detects_named_volume_mount():
     http = FakeHttpClient(
         [

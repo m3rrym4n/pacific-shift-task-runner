@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 
 
@@ -11,6 +13,20 @@ class RunnerClient:
         )
         response.raise_for_status()
         return response.json()["execution_id"]
+
+    async def wait_until_ready(self, url: str, timeout: float, interval: float) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        last_error: Exception | None = None
+        while True:
+            try:
+                response = await self.client.get(f"{url.rstrip('/')}/")
+                response.raise_for_status()
+                return
+            except httpx.HTTPError as exc:
+                last_error = exc
+            if asyncio.get_running_loop().time() >= deadline:
+                raise RuntimeError(f"Runner shim at {url} did not become ready") from last_error
+            await asyncio.sleep(interval)
 
     async def status(self, url: str, execution_id: str) -> dict:
         response = await self.client.get(f"{url.rstrip('/')}/status/{execution_id}")
