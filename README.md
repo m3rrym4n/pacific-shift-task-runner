@@ -269,39 +269,3 @@ The repository requires a self-hosted runner labeled `zimaos` and
 `pacific-shift-task-runner`, plus `DOCKHAND_URL` and `DOCKHAND_TOKEN` Actions secrets, before
 the workflow can be dispatched. Runner and token provisioning is managed
 separately from the reusable workflow.
-
-### Dedicated Codex runner
-
-Build and run the non-interactive runner separately from any interactive Codex container. Its Codex authentication is stored in a named volume.
-
-```bash
-docker build -t pacific-shift-codex-runner:latest codex_runner
-docker volume create pacific-shift-codex-runner-auth
-
-docker run --rm -it \
-  -v pacific-shift-codex-runner-auth:/home/codex/.codex \
-  pacific-shift-codex-runner:latest codex login --device-auth
-
-docker run -d \
-  --name codex-runner \
-  --restart unless-stopped \
-  --privileged \
-  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
-  -p 7000:7000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v pacific-shift-codex-runner-auth:/home/codex/.codex \
-  -e 'GITHUB_TOKEN=<redacted>' \
-  pacific-shift-codex-runner:latest
-
-docker exec codex-runner docker version
-docker exec codex-runner docker ps
-curl http://localhost:7000/codex/version
-```
-
-Privileged mode allows Codex's own `workspace-write` sandbox to create and
-configure its nested Linux namespace. The host Docker socket and its group ID
-give the non-root `codex` user access to the host daemon; the image contains
-the Docker CLI and Buildx plugin, but no Docker daemon. Supply `GITHUB_TOKEN`
-at runtime so the dispatched agent can clone, push, and open its PR. Test the runner image with `docker build -t
-pacific-shift-codex-runner:test -f codex_runner/Dockerfile.test codex_runner &&
-docker run --rm pacific-shift-codex-runner:test`.
