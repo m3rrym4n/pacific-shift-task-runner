@@ -96,6 +96,53 @@ class DockhandClient:
             raise DockhandDeployError("Dockhand did not report successful container creation")
         return result
 
+    async def spawn_runner(
+        self,
+        *,
+        name: str,
+        image: str,
+        auth_volume: str,
+        network: str,
+        environment: dict[str, str],
+        port: int,
+    ) -> str:
+        """Create and start one task-scoped runner, returning its shim URL."""
+        await self.create_container(
+            {
+                "name": name,
+                "image": image,
+                "env": [f"{key}={value}" for key, value in environment.items()],
+                "labels": {"pacific-shift.task-runner.ephemeral": "true"},
+                "volumeBinds": [f"{auth_volume}:/home/codex/.codex:rw"],
+                "ports": {},
+                "restartPolicy": "no",
+                "networkMode": network,
+            }
+        )
+        await self.start_container(name)
+        state = await self.wait_until_started(name)
+        network_settings = state.raw.get("NetworkSettings") or state.raw.get("networkSettings") or {}
+        address = network_settings.get("IPAddress") or network_settings.get("ipAddress")
+        if not address:
+            networks = network_settings.get("Networks") or network_settings.get("networks") or {}
+            for details in networks.values() if isinstance(networks, dict) else ():
+                if isinstance(details, dict):
+                    address = details.get("IPAddress") or details.get("ipAddress")
+                    if address:
+                        break
+        if not address:
+            # User-defined Docker networks resolve container names directly.
+            address = name
+        return f"http://{address}:{port}"
+
+    async def destroy_runner(self, name: str) -> None:
+        """Best-effort stop followed by a required forced removal."""
+        try:
+            await self.stop_container(name)
+        except Exception:
+            pass
+        await self.remove_container(name)
+
     async def pull_image(self, image: str) -> None:
         result = await self._post("/api/images/pull", {"image": image, "scanAfterPull": False})
         job_id = result.get("jobId")
