@@ -47,6 +47,7 @@ class Execution:
     resets_at: str | None = None
     session_id: str | None = None
     quota_auto_resume: bool = False
+    codex_version: str | None = None
     task: asyncio.Task[None] | None = field(default=None, repr=False)
 
 
@@ -58,7 +59,11 @@ class ExecutionStore:
     def create(self) -> Execution:
         execution_id = str(uuid.uuid4())
         workspace = Path(tempfile.mkdtemp(prefix=f"codex-{execution_id}-", dir=self.workspace_root))
-        execution = Execution(id=execution_id, workspace=workspace)
+        execution = Execution(
+            id=execution_id,
+            workspace=workspace,
+            codex_version=os.getenv("CODEX_RESOLVED_VERSION"),
+        )
         self.executions[execution_id] = execution
         return execution
 
@@ -330,6 +335,7 @@ def execution_result(execution_id: str) -> dict[str, object]:
         "resets_at": execution.resets_at,
         "session_id": execution.session_id,
         "quota_auto_resume": execution.quota_auto_resume,
+        "codex_version": execution.codex_version,
     }
 
 
