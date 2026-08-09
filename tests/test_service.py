@@ -1,6 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -332,6 +333,24 @@ def test_repo_registry_accepts_spawn_time_model_and_mcp_configuration(monkeypatc
     repo = Settings.from_env().repos[0]
     assert repo.model == "gpt-test"
     assert dict(repo.mcp_servers) == {"one": "http://one:7001/mcp"}
+
+
+def test_deploy_registry_carries_ff_runner_configuration(monkeypatch):
+    registry = Path("deploy/repos.json").read_text()
+    monkeypatch.setenv("TASK_RUNNER_REPOS", registry)
+
+    repos = {repo.repo: repo for repo in Settings.from_env().repos}
+    expected_mcp_servers = {
+        "ff-mcp": "http://192.168.1.68:7004/mcp",
+        "nfl-mcp": "http://192.168.1.68:9000/mcp",
+    }
+    for name in ("m3rrym4n/fantasy-football-mcp-public", "m3rrym4n/nfl_mcp"):
+        repo = repos[name]
+        assert repo.model == "gpt-5.5"
+        assert dict(repo.mcp_servers) == expected_mcp_servers
+        assert repo.dev.container.startswith("NO_DEPLOY_TARGET_")
+        assert repo.dev.human_promoted_only is True
+        assert repo.main.human_promoted_only is True
 
 
 @pytest.mark.parametrize(

@@ -52,7 +52,7 @@ Repositories may also set optional `model` and `mcp_servers` values. Task Runner
 passes those into each spawned container as `CODEX_RUNNER_MODEL` and
 `CODEX_RUNNER_MCP_SERVERS`; runner-side consumption is tracked by issue #86.
 
-The live four-repository configuration is maintained in
+The live repository configuration is maintained in
 [`deploy/repos.json`](deploy/repos.json). Set the environment variable from the
 file when starting the service, for example:
 
@@ -60,6 +60,11 @@ file when starting the service, for example:
 TASK_RUNNER_REPOS="$(tr -d '\n' < deploy/repos.json)"
 export TASK_RUNNER_REPOS
 ```
+
+The fantasy-football repositories use the canonical runner with their
+lower-cost model and `ff-mcp`/`nfl-mcp` endpoints set per repository. Their
+sentinel deploy targets preserve the existing no-deploy behavior: those tool
+services are operated independently and task dispatch must not replace them.
 
 `GET /api/repos` exposes the parsed, validated values to internal pipeline and
 dashboard consumers. Dispatch rejects missing repositories and runner
