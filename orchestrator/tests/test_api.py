@@ -67,7 +67,7 @@ def test_health_and_mcp_routes_remain_available(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "service", make_service(tmp_path, FakeRunner()))
     client = TestClient(main.app)
 
-    assert client.get("/").json() == {"service": "pacific-shift-task-runner", "status": "ok"}
+    assert client.get("/").json() == {"service": "variflex", "status": "ok"}
     assert any(getattr(route, "path", None) == "/mcp" for route in main.app.routes)
 
 

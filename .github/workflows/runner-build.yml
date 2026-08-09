@@ -1,0 +1,26 @@
+name: Runner Build
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'runner/**'
+      - '.github/workflows/runner-build.yml'
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'runner/**'
+      - '.github/workflows/runner-build.yml'
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test runner image
+        run: |
+          docker build -t variflex-runner:test -f runner/Dockerfile.test runner
+          docker run --rm variflex-runner:test
+      - name: Build runner image
+        run: docker build -t variflex-runner:${{ github.sha }} runner

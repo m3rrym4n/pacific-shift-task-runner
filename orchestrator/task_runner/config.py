@@ -146,9 +146,9 @@ class OpsImageCheck:
         repo = value.get("repo")
         issue_number = value.get("issue_number")
         registry = value.get("registry")
-        repository = value.get("repository", "codex-runner")
-        stop_container = value.get("stop_container", "codex-runner")
-        start_container = value.get("start_container", "codex-runner")
+        repository = value.get("repository", "variflex-runner")
+        stop_container = value.get("stop_container", "variflex-runner")
+        start_container = value.get("start_container", "variflex-runner")
         auth_volume = value.get("auth_volume", "pacific-shift-codex-runner-auth")
         buildkit_addr = value.get("buildkit_addr", "unix:///run/buildkit/buildkitd.sock")
         source_sha = value.get("source_sha") or os.getenv("TASK_RUNNER_SOURCE_SHA", "unknown")
@@ -218,7 +218,7 @@ class Settings:
     dockhand_verify_timeout_seconds: float = 60
     dockhand_verify_interval_seconds: float = 2
     max_concurrent_containers: int = 3
-    runner_image: str = "codex-runner:latest"
+    runner_image: str = "variflex-runner:latest"
     runner_auth_volume: str = "pacific-shift-codex-runner-auth"
     runner_port: int = 7000
     runner_network: str = "bridge"
@@ -292,7 +292,7 @@ class Settings:
             max_concurrent_containers=int(
                 os.getenv("TASK_RUNNER_MAX_CONCURRENT_CONTAINERS", "3")
             ),
-            runner_image=os.getenv("TASK_RUNNER_RUNNER_IMAGE", "codex-runner:latest"),
+            runner_image=os.getenv("TASK_RUNNER_RUNNER_IMAGE", "variflex-runner:latest"),
             runner_auth_volume=os.getenv(
                 "TASK_RUNNER_RUNNER_AUTH_VOLUME", "pacific-shift-codex-runner-auth"
             ),

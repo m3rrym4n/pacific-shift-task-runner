@@ -1,0 +1,21 @@
+name: Orchestrator Build
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'orchestrator/**'
+      - '.github/workflows/orchestrator-build.yml'
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test orchestrator image
+        run: |
+          docker build -t variflex-orchestrator:test -f orchestrator/Dockerfile.test orchestrator
+          docker run --rm variflex-orchestrator:test
+      - name: Build orchestrator image
+        run: docker build -t variflex-orchestrator:${{ github.sha }} orchestrator

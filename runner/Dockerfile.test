@@ -8,5 +8,5 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
-COPY __init__.py main.py test_main.py entrypoint.spawn-time-spike.sh test_entrypoint_spike.sh ./codex_runner/
-CMD ["sh", "-c", "codex_runner/test_entrypoint_spike.sh && pytest -q codex_runner/test_main.py"]
+COPY __init__.py main.py configure_mcp.py test_main.py test_configure_mcp.py ./codex_runner/
+CMD ["pytest", "-q", "codex_runner/test_main.py", "codex_runner/test_configure_mcp.py"]

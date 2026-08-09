@@ -527,7 +527,7 @@ class TaskService:
                 )
             log_parts.append(f"Verified required auth volume before deploy: {check.auth_volume}")
             if not self.settings.github_token:
-                raise RuntimeError("GITHUB_TOKEN is required to clone the codex-runner source")
+                raise RuntimeError("GITHUB_TOKEN is required to clone the Variflex runner source")
             credentials = base64.b64encode(
                 f"x-access-token:{self.settings.github_token}".encode()
             ).decode()
@@ -536,8 +536,9 @@ class TaskService:
                 "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
                 "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credentials}",
             }
-            with tempfile.TemporaryDirectory(prefix="codex-runner-build-") as workspace:
-                source_dir = os.path.join(workspace, "codex-runner")
+            with tempfile.TemporaryDirectory(prefix="variflex-runner-build-") as workspace:
+                repo_dir = os.path.join(workspace, "variflex")
+                source_dir = os.path.join(repo_dir, "runner")
                 clone_command = [
                     "git",
                     "clone",
@@ -546,8 +547,8 @@ class TaskService:
                     "--branch",
                     "main",
                     "--single-branch",
-                    "https://github.com/m3rrym4n/codex-runner.git",
-                    source_dir,
+                    "https://github.com/m3rrym4n/variflex.git",
+                    repo_dir,
                 ]
                 log_parts.append(await self._run_command(clone_command, env=git_env))
                 build_command = [
@@ -753,7 +754,7 @@ Runner queue: {check.runner}
 Installed Codex version: {installed}
 Target Codex version: {target}
 
-This is an internal maintenance job created by Task Runner after version drift
+This is an internal maintenance job created by Variflex after version drift
 was detected. It is tied to the configured trace issue so every rebuild cycle
 has a durable written reference in the normal task log/result model.
 """

@@ -16,7 +16,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
 COPY task_runner ./task_runner
-COPY codex_runner ./codex_runner
 COPY scripts ./scripts
 
 RUN mkdir -p /data && chown -R nobody:nogroup /data

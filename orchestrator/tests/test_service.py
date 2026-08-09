@@ -382,9 +382,9 @@ def test_settings_reads_ops_image_checks(monkeypatch):
             "owner/repo",
             35,
             "zot.lan:5000",
-            "codex-runner",
-            "codex-runner",
-            "codex-runner",
+            "variflex-runner",
+            "variflex-runner",
+            "variflex-runner",
             "pacific-shift-codex-runner-auth",
             "unix:///run/buildkit/buildkitd.sock",
             "unknown",
@@ -917,18 +917,19 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     assert tasks[0]["issue_number"] == 35
     assert tasks[0]["status"] == "completed"
     assert commands[0][:7] == ["git", "clone", "--depth", "1", "--branch", "main", "--single-branch"]
-    assert commands[0][7] == "https://github.com/m3rrym4n/codex-runner.git"
+    assert commands[0][7] == "https://github.com/m3rrym4n/variflex.git"
     assert command_options[0]["env"]["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
     assert "test-token" not in " ".join(commands[0])
-    source_dir = commands[0][8]
+    repo_dir = commands[0][8]
+    source_dir = os.path.join(repo_dir, "runner")
     assert commands[1][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
     assert f"context={source_dir}" in commands[1]
     assert f"dockerfile={source_dir}" in commands[1]
-    assert "context=/app/codex_runner" not in commands[1]
-    assert "dockerfile=/app/codex_runner" not in commands[1]
+    assert "context=/app/runner" not in commands[1]
+    assert "dockerfile=/app/runner" not in commands[1]
     assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[1]
     assert commands[2][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
-    assert not os.path.exists(os.path.dirname(source_dir))
+    assert not os.path.exists(repo_dir)
     assert dockhand.deploys == [("codex-runner", "codex-runner")]
     assert dockhand.pulls == ["zot.lan:5000/codex-runner:0.144.1-abc1234"]
     assert dockhand.volume_checks == [

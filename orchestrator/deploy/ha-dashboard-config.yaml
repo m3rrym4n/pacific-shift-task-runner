@@ -1,11 +1,11 @@
-# Home Assistant configuration for Pacific Shift Task Runner
+# Home Assistant configuration for Pacific Shift Variflex
 #
 # Manual application (this file is a reference artifact; do not include it whole):
 # 1. Copy the input_text, input_select, rest_command, rest, automation, and script
 #    blocks into configuration.yaml. Merge their children into existing blocks
 #    with the same names instead of declaring a second top-level key.
 # 2. If Home Assistant cannot reach 192.168.1.68:6002, replace that base URL with
-#    the production Task Runner URL reachable from the Home Assistant container.
+#    the production Variflex URL reachable from the Home Assistant container.
 # 3. Run Home Assistant's configuration check, then restart Home Assistant. The
 #    rest_command and REST sensor integrations are YAML-only and require a restart.
 # 4. Copy only the final `type: entities` blocks into manual dashboard cards using
@@ -36,7 +36,7 @@ input_select:
     icon: mdi:github
     options:
       - m3rrym4n/cratespy
-      - m3rrym4n/pacific-shift-task-runner
+      - m3rrym4n/variflex
       - m3rrym4n/pacific-shift-publisher
       - m3rrym4n/dockhand-mcp
       - m3rrym4n/pacific-shift-ci
@@ -80,7 +80,7 @@ rest:
     scan_interval: 30
     timeout: 10
     sensor:
-      - name: Task Runner Codex Queue
+      - name: Variflex Codex Queue
         unique_id: task_runner_codex_queue
         icon: mdi:tray-full
         value_template: >-
@@ -106,7 +106,7 @@ rest:
     scan_interval: 300
     timeout: 10
     sensor:
-      - name: Task Runner Repositories
+      - name: Variflex Repositories
         unique_id: task_runner_repositories
         icon: mdi:source-repository-multiple
         value_template: "{{ value_json.get('repos', []) | count }}"
@@ -131,7 +131,7 @@ rest:
 # the dated fallback options above remain in place.
 automation:
   - id: task_runner_refresh_repositories
-    alias: Task Runner - Refresh repositories
+    alias: Variflex - Refresh repositories
     mode: restart
     triggers:
       - trigger: homeassistant
@@ -166,7 +166,7 @@ automation:
 # so an un-normalized `and` chain silently routes real successes into `else`.
 script:
   task_runner_dispatch:
-    alias: Task Runner - Dispatch
+    alias: Variflex - Dispatch
     icon: mdi:rocket-launch-outline
     mode: single
     sequence:
@@ -189,7 +189,7 @@ script:
               value: "{{ dispatch_response.get('content', {}).get('task_id') }}"
           - action: persistent_notification.create
             data:
-              title: Task Runner Dispatch
+              title: Variflex Dispatch
               message: >-
                 Dispatched **{{ states.input_select.task_runner_repo.state }}#{{
                 states.input_text.task_runner_issue_number.state }}**
@@ -201,7 +201,7 @@ script:
         else:
           - action: persistent_notification.create
             data:
-              title: Task Runner Dispatch Failed
+              title: Variflex Dispatch Failed
               message: >-
                 Dispatch of **{{ states.input_select.task_runner_repo.state }}#{{
                 states.input_text.task_runner_issue_number.state }}** did not return a task.
@@ -210,7 +210,7 @@ script:
                 Response: {{ dispatch_response.content }}
               notification_id: task_runner_last_dispatch
   task_runner_clear_halt:
-    alias: Task Runner - Clear runner halt
+    alias: Variflex - Clear runner halt
     icon: mdi:play-circle-outline
     mode: single
     sequence:
@@ -222,7 +222,7 @@ script:
         target:
           entity_id: sensor.task_runner_codex_queue
   task_runner_cancel:
-    alias: Task Runner - Cancel queued task
+    alias: Variflex - Cancel queued task
     icon: mdi:cancel
     mode: single
     sequence:
@@ -234,7 +234,7 @@ script:
         target:
           entity_id: sensor.task_runner_codex_queue
   task_runner_get_result:
-    alias: Task Runner - Get task result
+    alias: Variflex - Get task result
     icon: mdi:clipboard-text-search-outline
     mode: single
     sequence:
@@ -244,7 +244,7 @@ script:
         response_variable: result_response
       - action: persistent_notification.create
         data:
-          title: Task Runner Result
+          title: Variflex Result
           message: >-
             Task: {{ result_response.content.id }}
             Status: {{ result_response.content.status }}
@@ -252,7 +252,7 @@ script:
             {{ result_response.content.result or result_response.content.error or 'No result available yet.' }}
           notification_id: task_runner_last_result
   task_runner_get_log:
-    alias: Task Runner - Get task log
+    alias: Variflex - Get task log
     icon: mdi:text-box-search-outline
     mode: single
     sequence:
@@ -262,7 +262,7 @@ script:
         response_variable: log_response
       - action: persistent_notification.create
         data:
-          title: Task Runner Log
+          title: Variflex Log
           message: >-
             Task: {{ log_response.content.id }}
             Status: {{ log_response.content.status }}
@@ -277,7 +277,7 @@ script:
 # the script comment above) since Home Assistant rest_command responses are not
 # persistent sensor state and would otherwise only be visible in script traces.
 type: entities
-title: Task Runner
+title: Variflex
 show_header_toggle: false
 entities:
   - entity: input_select.task_runner_repo
@@ -304,7 +304,7 @@ entities:
     name: Get task log
 
 # Lovelace dashboard raw configuration: a second, separate card for centralized
-# logging (task-runner#63). Kept apart from the Task Runner card above since
+# logging (task-runner#63). Kept apart from the Variflex card above since
 # Loki/Promtail are shared infrastructure, not specific to this repo's pipeline.
 type: entities
 title: Centralized Logging
