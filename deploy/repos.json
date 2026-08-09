@@ -22,5 +22,27 @@
     "runner": "codex",
     "dev": {"container": "dockhand-mcp-dev", "volume": "dockhand-mcp-dev-data", "port": 7001},
     "main": {"container": "dockhand-mcp", "volume": "dockhand-mcp-data", "port": 6003, "human_promoted_only": true}
+  },
+  {
+    "repo": "m3rrym4n/fantasy-football-mcp-public",
+    "runner": "codex",
+    "model": "gpt-5.5",
+    "mcp_servers": {
+      "ff-mcp": "http://192.168.1.68:7004/mcp",
+      "nfl-mcp": "http://192.168.1.68:9000/mcp"
+    },
+    "dev": {"container": "NO_DEPLOY_TARGET_fantasy-football-mcp-public", "volume": "NO_DEPLOY_TARGET_fantasy-football-mcp-public", "port": 1, "human_promoted_only": true},
+    "main": {"container": "NO_DEPLOY_TARGET_fantasy-football-mcp-public", "volume": "NO_DEPLOY_TARGET_fantasy-football-mcp-public", "port": 1, "human_promoted_only": true}
+  },
+  {
+    "repo": "m3rrym4n/nfl_mcp",
+    "runner": "codex",
+    "model": "gpt-5.5",
+    "mcp_servers": {
+      "ff-mcp": "http://192.168.1.68:7004/mcp",
+      "nfl-mcp": "http://192.168.1.68:9000/mcp"
+    },
+    "dev": {"container": "NO_DEPLOY_TARGET_nfl_mcp", "volume": "NO_DEPLOY_TARGET_nfl_mcp", "port": 1, "human_promoted_only": true},
+    "main": {"container": "NO_DEPLOY_TARGET_nfl_mcp", "volume": "NO_DEPLOY_TARGET_nfl_mcp", "port": 1, "human_promoted_only": true}
   }
 ]
