@@ -316,7 +316,7 @@ def _session_id(output: str) -> str | None:
 
 @app.get("/")
 def health() -> dict[str, str]:
-    return {"service": "pacific-shift-codex-runner", "status": "ok"}
+    return {"service": "variflex-runner", "status": "ok"}
 
 
 @app.get("/codex/version")

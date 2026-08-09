@@ -28,7 +28,7 @@ service = TaskService(
         verify_interval_seconds=settings.dockhand_verify_interval_seconds,
     ),
 )
-mcp = FastMCP("Pacific Shift Task Runner", stateless_http=True, streamable_http_path="/")
+mcp = FastMCP("Variflex", stateless_http=True, streamable_http_path="/")
 
 
 @mcp.tool()
@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
             await service.stop_scheduler()
 
 
-app = FastAPI(title="Pacific Shift Task Runner", lifespan=lifespan)
+app = FastAPI(title="Variflex", lifespan=lifespan)
 
 
 class RunTaskRequest(BaseModel):
@@ -93,7 +93,7 @@ class RunTaskRequest(BaseModel):
 
 @app.get("/")
 def health() -> dict[str, str]:
-    return {"service": "pacific-shift-task-runner", "status": "ok"}
+    return {"service": "variflex", "status": "ok"}
 
 
 @app.get("/api/tasks")

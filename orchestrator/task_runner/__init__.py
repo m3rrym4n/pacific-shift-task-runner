@@ -1,2 +1,1 @@
-"""Pacific Shift Task Runner orchestrator."""
-
+"""Variflex orchestrator."""

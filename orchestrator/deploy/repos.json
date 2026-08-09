@@ -6,10 +6,10 @@
     "main": {"container": "cratespy", "volume": "cratespy_cratespy-data", "port": 8000, "human_promoted_only": true}
   },
   {
-    "repo": "m3rrym4n/pacific-shift-task-runner",
+    "repo": "m3rrym4n/variflex",
     "runner": "codex",
-    "dev": {"container": "pacific-shift-task-runner-dev", "volume": "pacific-shift-task-runner-dev-data", "port": 6004},
-    "main": {"container": "pacific-shift-task-runner", "volume": "pacific-shift-task-runner-data", "port": 6002, "human_promoted_only": true}
+    "dev": {"container": "variflex-dev", "volume": "variflex-dev-data", "port": 6004},
+    "main": {"container": "variflex", "volume": "variflex-data", "port": 6002, "human_promoted_only": true}
   },
   {
     "repo": "m3rrym4n/pacific-shift-publisher",

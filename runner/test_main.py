@@ -11,7 +11,7 @@ def test_health_endpoint():
         response = client.get("/")
 
     assert response.status_code == 200
-    assert response.json() == {"service": "pacific-shift-codex-runner", "status": "ok"}
+    assert response.json() == {"service": "variflex-runner", "status": "ok"}
 
 
 def test_execute_lifecycle_and_result(monkeypatch, tmp_path):
