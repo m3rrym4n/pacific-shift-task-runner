@@ -416,6 +416,26 @@ async def test_real_dispatch_lifecycle_and_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_spawn_environment_includes_github_token(tmp_path):
+    runner = FakeRunner(result={"result": "structured report", "log": "abc"})
+    service = make_service(tmp_path, runner)
+    await service.run_task("owner/repo", 2, "codex")
+    await asyncio.gather(*service._jobs)
+
+    assert service.dockhand.spawned[0]["environment"]["GITHUB_TOKEN"] == "test-token"
+
+
+@pytest.mark.asyncio
+async def test_spawn_environment_omits_github_token_when_unconfigured(tmp_path):
+    runner = FakeRunner(result={"result": "structured report", "log": "abc"})
+    service = make_service(tmp_path, runner, github_token="")
+    await service.run_task("owner/repo", 2, "codex")
+    await asyncio.gather(*service._jobs)
+
+    assert "GITHUB_TOKEN" not in service.dockhand.spawned[0]["environment"]
+
+
+@pytest.mark.asyncio
 async def test_timeout_is_persisted_and_cancellation_attempted(tmp_path):
     runner = FakeRunner(statuses=[{"status": "running"}] * 100)
     service = make_service(tmp_path, runner, timeout_seconds=0.01, poll_interval_seconds=0.005)
