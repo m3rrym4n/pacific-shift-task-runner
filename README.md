@@ -23,6 +23,8 @@ Variflex exists to solve that specific gap, and everything else follows from it:
 
 Each directory owns its Dockerfile, dependencies, tests, and build context. Changes are filtered by path in CI so one image does not rebuild when only the other component changes.
 
+**One product, one always-on container, with ancillary containers spawned on demand.** `orchestrator/` and `runner/` build two separate images, but they don't run as two persistent containers. Only `variflex` (the orchestrator) runs continuously. `variflex-runner` instances are ephemeral — Dockhand creates one per admitted task and tears it down when that task finishes, fails, times out, or hits quota. During idle periods, zero runner containers exist; under load, several can run concurrently up to `TASK_RUNNER_MAX_CONCURRENT_CONTAINERS`. Think of it as one product with a single durable service plus on-demand workload containers, not two peer services that are both always running.
+
 ## Building
 
 Both components build independently from their own directory:
