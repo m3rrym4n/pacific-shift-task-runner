@@ -1,1 +1,320 @@
-IyBQYWNpZmljIFNoaWZ0IFZhcmlmbGV4CgpGYXN0QVBJL1NRTGl0ZSBvcmNoZXN0cmF0b3IgdGhhdCBkaXNwYXRjaGVzIEdpdEh1YiBpc3N1ZXMgdG8gcmVnaXN0cnktY29uZmlndXJlZCBydW5uZXIgSFRUUCBzaGltcyBhbmQgZXhwb3NlcyBmb3VyIE1DUCB0b29scy4KCiMjIFdoeSB0aGlzIGV4aXN0cwoKTW9zdCBvcGVuLXNvdXJjZSBBSSBjb2RpbmcgYWdlbnQgb3JjaGVzdHJhdG9ycyDigJQgW0Jlcm5zdGVpbl0oaHR0cHM6Ly9naXRodWIuY29tL2NoZXJuaXN0cnkvYmVybnN0ZWluKSwgW09wZW5IYW5kc10oaHR0cHM6Ly9naXRodWIuY29tL0FsbC1IYW5kcy1BSS9PcGVuSGFuZHMpLCBbTWljcm9zb2Z0IENvbmR1Y3Rvcl0oaHR0cHM6Ly9naXRodWIuY29tL21pY3Jvc29mdC9jb25kdWN0b3IpLCBhbmQgb3RoZXJzIHN1cnZleWVkIGluIHRoaXMgc3BhY2Ug4oCUIGRvbid0IGRvY3VtZW50IGhhbmRsaW5nIGNvZGluZy1hZ2VudCByYXRlIGxpbWl0cyBhcyBhIGZpcnN0LWNsYXNzIGNhc2UuIEluIHByYWN0aWNlLCB0aGF0J3MgdGhlIGZpcnN0IHRoaW5nIHRoYXQgYWN0dWFsbHkgaGFwcGVucyBvbiBhbnkgc3VzdGFpbmVkIHJ1bi4KClZhcmlmbGV4IGV4aXN0cyB0byBzdXJ2aXZlIHRoYXQuIEl0J3MgYSBzZWxmLWhvc3RlZCBvcmNoZXN0cmF0b3IgZm9yIEFJIGNvZGluZyBhZ2VudHMgKENvZGV4IHRvZGF5KSBidWlsdCBhcm91bmQ6CgotICoqUGVyLXJlcG9zaXRvcnkgRklGTyBxdWV1ZXMqKiDigJQgb25lIHRhc2sgY29udGFpbmVyIHBlciByZXBvc2l0b3J5IGF0IGEgdGltZSwgd2l0aCBhIGNvbmZpZ3VyYWJsZSBnbG9iYWwgY29udGFpbmVyIGNhcC4KLSAqKlF1b3RhLWV4aGF1c3Rpb24gZGV0ZWN0aW9uIGFuZCByZXN1bWUqKiDigJQgYSBzdHJ1Y3R1cmVkIHJhdGUtbGltaXQgcmVzcG9uc2Ugd2l0aCBhbiBJU08gODYwMSByZXNldCB0aW1lIHJldHVybnMgdGhlIGludGVycnVwdGVkIHRhc2sgdG8gdGhlIGhlYWQgb2YgaXRzIHF1ZXVlIGFuZCBhdXRvbWF0aWNhbGx5IHJlc3VtZXMgdGhlIHNhbWUgc2Vzc2lvbiBvbmNlIHRoZSBxdW90YSBjbG9jayBhbGxvd3MsIGluc3RlYWQgb2YgbG9zaW5nIHRoZSB3b3JrIG9yIHJlcXVpcmluZyBhIG1hbnVhbCByZXN0YXJ0LgotICoqU2Vzc2lvbi1kdXJhYmxlIHF1ZXVlcyoqIOKAlCBwZW5kaW5nIG9yZGVyLCBoYWx0IHN0YXRlLCBhbmQgdGhlIGFjdGl2ZSB0YXNrIHJlZmVyZW5jZSBhbGwgc3Vydml2ZSBhbiBvcmNoZXN0cmF0b3IgcmVzdGFydC4KLSAqKkh1bWFuLWNvbnRyb2xsZWQgcHJvbW90aW9uKiog4oCUIGV2ZXJ5IGRpc3BhdGNoIHRyYWNlcyBiYWNrIHRvIGEgR2l0SHViIGlzc3VlOyBgZGV2YCBidWlsZHMgYXV0b21hdGljYWxseSwgYG1haW5gL3N0YWJsZSBvbmx5IG1vdmVzIG9uIGV4cGxpY2l0IGh1bWFuIGFjdGlvbi4KCiMjIENvbmZpZ3VyYXRpb24KCnwgVmFyaWFibGUgfCBEZWZhdWx0IHwgUHVycG9zZSB8CnwtLS18LS0tOnwtLS18CnwgYFRBU0tfUlVOTkVSX1JVTk5FUlNgIHwgYHt9YCB8IEpTT04gbWFwcGluZyBydW5uZXIgbmFtZXMgdG8gaW50ZXJuYWwgVVJMcywgZS5nLiBgeyJjb2RleCI6Imh0dHA6Ly8xOTIuMTY4LjEuNjg6NzAwMCJ9YCB8CnwgYFRBU0tfUlVOTkVSX1NDSEVEVUxFRF9UQVNLU2AgfCBgW11gIHwgSlNPTiBhcnJheSBvZiBzY2hlZHVsZWQgaXNzdWUgZGlzcGF0Y2hlcyB8CnwgYFRBU0tfUlVOTkVSX09QU19JTUFHRV9DSEVDS1NgIHwgYFtdYCB8IEpTT04gYXJyYXkgb2Ygc2NoZWR1bGVkIG9wZXJhdGlvbmFsIGltYWdlIHZlcnNpb24tZHJpZnQgY2hlY2tzIGFuZCByZWJ1aWxkIGpvYnMgfAp8IGBUQVNLX1JVTk5FUl9SRVBPU2AgfCBgW11gIHwgSlNPTiBhcnJheSBvZiBvbmJvYXJkZWQgcmVwb3NpdG9yeSBhbmQgZGV2L21haW4gZGVwbG95LXRhcmdldCBvYmplY3RzIHwKfCBgVEFTS19SVU5ORVJfREFUQUJBU0VgIHwgYC9kYXRhL3Rhc2tzLmRiYCB8IFNRTGl0ZSBkYXRhYmFzZSBwYXRoIHwKfCBgVEFTS19SVU5ORVJfVElNRU9VVF9TRUNPTkRTYCB8IGA2MDBgIHwgSGFyZCBvcmNoZXN0cmF0aW9uIHRpbWVvdXQgfAp8IGBUQVNLX1JVTk5FUl9PVVRQVVRfQ0FQX0JZVEVTYCB8IGAxMDAwMDAwYCB8IE1heGltdW0gcmV0YWluZWQgcnVubmVyIGxvZyBzaXplIHwKfCBgVEFTS19SVU5ORVJfUE9MTF9JTlRFUlZBTF9TRUNPTkRTYCB8IGAyYCB8IFJ1bm5lciBzdGF0dXMgcG9sbGluZyBpbnRlcnZhbCB8CnwgYEdJVEhVQl9UT0tFTmAgfCB1bnNldCB8IE9wdGlvbmFsIHRva2VuIGZvciBwcml2YXRlIHJlcG9zaXRvcmllcyBvciBoaWdoZXIgQVBJIGxpbWl0cyB8CnwgYFRBU0tfUlVOTkVSX0RPQ0tIQU5EX1VSTGAgfCB1bnNldCB8IERvY2toYW5kIFJFU1QgQVBJIGJhc2UgVVJMIGZvciBpbnRlcm5hbCBjb250YWluZXIgZGVwbG95IG9wZXJhdGlvbnMgfAp8IGBUQVNLX1JVTk5FUl9ET0NLSEFORF9UT0tFTmAgfCB1bnNldCB8IERlZGljYXRlZCBWYXJpZmxleCBEb2NraGFuZCBBUEkgdG9rZW4gKGBkaF8uLi5gKTsgZG8gbm90IHJldXNlIGBkb2NraGFuZC1tY3BgIGNyZWRlbnRpYWxzIHwKfCBgVEFTS19SVU5ORVJfRE9DS0hBTkRfRU5WYCB8IHVuc2V0IHwgT3B0aW9uYWwgRG9ja2hhbmQgZW52aXJvbm1lbnQgSUQgZm9yIGNvbnRhaW5lciBkZXBsb3kgb3BlcmF0aW9ucyB8CnwgYFRBU0tfUlVOTkVSX0RPQ0tIQU5EX1ZFUklGWV9USU1FT1VUX1NFQ09ORFNgIHwgYDYwYCB8IE1heGltdW0gdGltZSB0byB3YWl0IGZvciBhIHN0YXJ0ZWQgY29udGFpbmVyIHRvIHZlcmlmeSBhcyBydW5uaW5nIG9yIGhlYWx0aHkgfAp8IGBUQVNLX1JVTk5FUl9ET0NLSEFORF9WRVJJRllfSU5URVJWQUxfU0VDT05EU2AgfCBgMmAgfCBQb2xsIGludGVydmFsIHdoaWxlIHZlcmlmeWluZyBhIHN0YXJ0ZWQgY29udGFpbmVyIHwKfCBgVEFTS19SVU5ORVJfTUFYX0NPTkNVUlJFTlRfQ09OVEFJTkVSU2AgfCBgM2AgfCBHbG9iYWwgY2VpbGluZyBmb3Igc2ltdWx0YW5lb3VzbHkgYWN0aXZlIHBlci10YXNrIHJ1bm5lciBjb250YWluZXJzIHwKfCBgVEFTS19SVU5ORVJfUlVOTkVSX0lNQUdFYCB8IGBjb2RleC1ydW5uZXI6bGF0ZXN0YCB8IEltYWdlIHVzZWQgZm9yIGVwaGVtZXJhbCBydW5uZXIgY29udGFpbmVycyB8CnwgYFRBU0tfUlVOTkVSX1JVTk5FUl9BVVRIX1ZPTFVNRWAgfCBgdmFyaWZsZXgtcnVubmVyLWF1dGhgIHwgU2hhcmVkIENvZGV4IGF1dGgvc2Vzc2lvbiB2b2x1bWUgbW91bnRlZCBpbnRvIGVhY2ggcnVubmVyIHwKfCBgVEFTS19SVU5ORVJfUlVOTkVSX1BPUlRgIHwgYDcwMDBgIHwgUnVubmVyIHNoaW0gcG9ydCBpbnNpZGUgdGhlIGVwaGVtZXJhbCBjb250YWluZXIgfAp8IGBUQVNLX1JVTk5FUl9SVU5ORVJfTkVUV09SS2AgfCBgYnJpZGdlYCB8IERvY2tlciBuZXR3b3JrIG1vZGUgc3VwcGxpZWQgdG8gRG9ja2hhbmQgYXQgY29udGFpbmVyIGNyZWF0aW9uIHwKfCBgVEFTS19SVU5ORVJfU09VUkNFX1NIQWAgfCBgdW5rbm93bmAgfCBTb3VyY2UgcmV2aXNpb24gYmFrZWQgaW50byB0aGUgVmFyaWZsZXggaW1hZ2UgYW5kIHVzZWQgaW4gT3BzIEltYWdlcyB0YWdzIHwKClRoZSBNQ1AgU3RyZWFtYWJsZSBIVFRQIGVuZHBvaW50IGlzIGAvbWNwL2A7IHRoZSBoZWFsdGggZW5kcG9pbnQgaXMgYC9gLgoKIyMjIFJlcG9zaXRvcnkgcmVnaXN0cnkKCkV2ZXJ5IGRpc3BhdGNoZWQgcmVwb3NpdG9yeSBtdXN0IGFwcGVhciBpbiBgVEFTS19SVU5ORVJfUkVQT1NgLiBFYWNoIGVudHJ5CnNlbGVjdHMgb25lIGNvbmZpZ3VyZWQgcnVubmVyIGFuZCByZWNvcmRzIGJvdGggaXRzIGF1dG9tYXRpY2FsbHkgZGVwbG95ZWQgYGRldmAKdGFyZ2V0IGFuZCBodW1hbi1wcm9tb3RlZCBgbWFpbmAgdGFyZ2V0LiBUYXJnZXRzIHJlcXVpcmUgYGNvbnRhaW5lcmAsIGB2b2x1bWVgLAphbmQgYSBwb3NpdGl2ZSBpbnRlZ2VyIGBwb3J0YC4gT3B0aW9uYWwgYGhlYWx0aF9wYXRoYCBhbmQgYGV4cGVjdGVkX2NvbnRlbnRgCnZhbHVlcyBvdmVycmlkZSB0aGUgcmV1c2FibGUgd29ya2Zsb3cncyBnZW5lcmljIEhUVFAgY2hlY2suIGBoZWFsdGhfcGF0aGAKZGVmYXVsdHMgdG8gYC9gIGluIHRoYXQgd29ya2Zsb3cgd2hlbiBvbWl0dGVkLgpSZXBvc2l0b3JpZXMgbWF5IGFsc28gc2V0IG9wdGlvbmFsIGBtb2RlbGAgYW5kIGBtY3Bfc2VydmVyc2AgdmFsdWVzLiBWYXJpZmxleApwYXNzZXMgdGhvc2UgaW50byBlYWNoIHNwYXduZWQgY29udGFpbmVyIGFzIGBDT0RFWF9SVU5ORVJfTU9ERUxgIGFuZApgQ09ERVhfUlVOTkVSX01DUF9TRVJWRVJTYDsgcnVubmVyLXNpZGUgY29uc3VtcHRpb24gaXMgdHJhY2tlZCBieSBpc3N1ZSAjODYuCgpUaGUgbGl2ZSByZXBvc2l0b3J5IGNvbmZpZ3VyYXRpb24gaXMgbWFpbnRhaW5lZCBpbgpbYGRlcGxveS9yZXBvcy5qc29uYF0oZGVwbG95L3JlcG9zLmpzb24pLiBTZXQgdGhlIGVudmlyb25tZW50IHZhcmlhYmxlIGZyb20gdGhlCmZpbGUgd2hlbiBzdGFydGluZyB0aGUgc2VydmljZSwgZm9yIGV4YW1wbGU6CgpgYGBiYXNoClRBU0tfUlVOTkVSX1JFUE9TPSIkKHRyIC1kICdcbicgPCBkZXBsb3kvcmVwb3MuanNvbikiCmV4cG9ydCBUQVNLX1JVTk5FUl9SRVBPUwpgYGAKClRoZSBmYW50YXN5LWZvb3RiYWxsIHJlcG9zaXRvcmllcyB1c2UgdGhlIGNhbm9uaWNhbCBydW5uZXIgd2l0aCB0aGVpcgpsb3dlci1jb3N0IG1vZGVsIGFuZCBgZmYtbWNwYC9gbmZsLW1jcGAgZW5kcG9pbnRzIHNldCBwZXIgcmVwb3NpdG9yeS4gVGhlaXIKc2VudGluZWwgZGVwbG95IHRhcmdldHMgcHJlc2VydmUgdGhlIGV4aXN0aW5nIG5vLWRlcGxveSBiZWhhdmlvcjogdGhvc2UgdG9vbApzZXJ2aWNlcyBhcmUgb3BlcmF0ZWQgaW5kZXBlbmRlbnRseSBhbmQgdGFzayBkaXNwYXRjaCBtdXN0IG5vdCByZXBsYWNlIHRoZW0uCgpgR0VUIC9hcGkvcmVwb3NgIGV4cG9zZXMgdGhlIHBhcnNlZCwgdmFsaWRhdGVkIHZhbHVlcyB0byBpbnRlcm5hbCBwaXBlbGluZSBhbmQKZGFzaGJvYXJkIGNvbnN1bWVycy4gRGlzcGF0Y2ggcmVqZWN0cyBtaXNzaW5nIHJlcG9zaXRvcmllcyBhbmQgcnVubmVyCm1pc21hdGNoZXMgYmVmb3JlIGNyZWF0aW5nIGEgdGFzayByb3cuIGBwYWNpZmljLXNoaWZ0LW1jcC1wcm94eWAgaXMgZGVsaWJlcmF0ZWx5CmFic2VudCBiZWNhdXNlIGl0cyBIb21lIEFzc2lzdGFudCBhZGQtb24gZGVwbG95bWVudCBkb2VzIG5vdCB1c2UgdGhpcyBjb250YWluZXIKdGFyZ2V0IG1vZGVsLgoKRG9ja2hhbmQgY29uZmlndXJhdGlvbiBpcyBhbiBpbnRlcm5hbCBWYXJpZmxleCBjYXBhYmlsaXR5IGZvciBlcGhlbWVyYWwgcnVubmVyIGxpZmVjeWNsZSBhbmQgT3BzIEltYWdlcwpkZXBsb3kgc3RlcHMuIEl0IGlzIG5vdCBleHBvc2VkIGFzIGFuIE1DUCB0b29sLiBUaGUgdG9rZW4gbXVzdCBiZSBzdXBwbGllZCBhdApydW50aW1lIHRocm91Z2ggYFRBU0tfUlVOTkVSX0RPQ0tIQU5EX1RPS0VOYCBhbmQgc2hvdWxkIGJlIGdlbmVyYXRlZCB1bmRlciBhCmRlZGljYXRlZCBWYXJpZmxleCBhY2NvdW50LgoKIyMjIFNjaGVkdWxlZCB0YXNrcwoKSXNzdWUgc2NoZWR1bGVkIHRhc2tzIHJldXNlIHRoZSBzYW1lIGRpc3BhdGNoIHBhdGggYXMgdGhlIGBydW5fdGFza2AgTUNQIHRvb2wuIFdoZW4gYQpjb25maWd1cmVkIGludGVydmFsIGZpcmVzLCBWYXJpZmxleCBjcmVhdGVzIGEgbm9ybWFsIHRhc2sgcm93IGZvciB0aGUgdGFyZ2V0CnJlcG9zaXRvcnkgaXNzdWUgYW5kIHJ1bm5lci4gVGhlIGZpcmUgaXMgdmlzaWJsZSBpbiBjb250YWluZXIgbG9ncyBhbmQgaW4KYGxpc3RfdGFza3NgLgoKQ29uZmlndXJlIHNjaGVkdWxlcyB3aXRoIGBUQVNLX1JVTk5FUl9TQ0hFRFVMRURfVEFTS1NgOgoKYGBganNvbgpbCiAgewogICAgIm5hbWUiOiAiZGFpbHktY29kZXgtaGVhbHRoLWNoZWNrIiwKICAgICJyZXBvIjogIm0zcnJ5bTRuL3ZhcmlmbGV4IiwKICAgICJpc3N1ZV9udW1iZXIiOiAxNSwKICAgICJydW5uZXIiOiAiY29kZXgiLAogICAgImludGVydmFsIjogIjFkIgogIH0KXQpgYGAKCmBpbnRlcnZhbGAgYWNjZXB0cyBhIHBvc2l0aXZlIG51bWJlciBvZiBzZWNvbmRzIG9yIGEgc3RyaW5nIHdpdGggb25lIG9mIHRoZXNlCnN1ZmZpeGVzOgoKfCBTdWZmaXggfCBNZWFuaW5nIHwgRXhhbXBsZSB8CnwtLS18LS0tOnwtLS18CnwgYHNgIHwgc2Vjb25kcyB8IGAxMjBzYCB8CnwgYG1gIHwgbWludXRlcyB8IGAybWAgfAp8IGBoYCB8IGhvdXJzIHwgYDZoYCB8CnwgYGRgIHwgZGF5cyB8IGAxZGAgfAoKVG8gYWRkIGEgc2NoZWR1bGVkIGpvYiwgYWRkIGFuIG9iamVjdCB0byBgVEFTS19SVU5ORVJfU0NIRURVTEVEX1RBU0tTYCBhbmQKcmVzdGFydCB0aGUgY29udGFpbmVyLiBUbyByZW1vdmUgYSBzY2hlZHVsZWQgam9iLCByZW1vdmUgaXRzIG9iamVjdCBmcm9tIHRoZQphcnJheSBhbmQgcmVzdGFydCB0aGUgY29udGFpbmVyLiBUaGUgYHJ1bm5lcmAgdmFsdWUgbXVzdCBtYXRjaCBhIGtleSBpbgpgVEFTS19SVU5ORVJfUlVOTkVSU2AuCgpPcHMgSW1hZ2UgY2hlY2tzIHVzZSB0aGUgc2FtZSBzY2hlZHVsZXIgYW5kIHRoZSBzYW1lIHBlci1ydW5uZXIgcXVldWUgYXMgbm9ybWFsCmlzc3VlIGRpc3BhdGNoZXMuIFRoZXkgY2FsbCB0aGUgY29uZmlndXJlZCBydW5uZXIncyB2ZXJzaW9uIGVuZHBvaW50IGFuZCwgd2hlbgpkcmlmdCBpcyBkZXRlY3RlZCwgY3JlYXRlIGEgbm9ybWFsIHRhc2sgcm93IHRpZWQgdG8gYSBmaXhlZCB0cmFjZSBpc3N1ZS4gVGhlCnF1ZXVlZCBpbnRlcm5hbCBqb2IgYnVpbGRzLCBwdXNoZXMsIHBydW5lcywgZGVwbG95cywgYW5kIHZlcmlmaWVzIHRoZSByZWJ1aWx0CkNvZGV4IHJ1bm5lciBpbWFnZS4gVGhlIGZpeGVkIHRyYWNlIGlzc3VlIHByZXNlcnZlcyB0aGUgIndyaXR0ZW4gaXNzdWUgYmVoaW5kCmV2ZXJ5IGFjdGlvbiIgcnVsZSB3aXRob3V0IGNyZWF0aW5nIGEgbmV3IEdpdEh1YiBpc3N1ZSBmb3IgZXZlcnkgbWFpbnRlbmFuY2UKY3ljbGUuCgpDb25maWd1cmUgT3BzIEltYWdlIGNoZWNrcyB3aXRoIGBUQVNLX1JVTk5FUl9PUFNfSU1BR0VfQ0hFQ0tTYDoKCmBgYGpzb24KWwogIHsKICAgICJuYW1lIjogImRhaWx5LWNvZGV4LXJ1bm5lci1yZWJ1aWxkLWNoZWNrIiwKICAgICJydW5uZXIiOiAiY29kZXgiLAogICAgInJlcG8iOiAibTNycnltNG4vdmFyaWZsZXgiLAogICAgImlzc3VlX251bWJlciI6IDM1LAogICAgInJlZ2lzdHJ5IjogInpvdC5sYW46NTAwMCIsCiAgICAicmVwb3NpdG9yeSI6ICJjb2RleC1ydW5uZXIiLAogICAgInN0b3BfY29udGFpbmVyIjogImNvZGV4LXJ1bm5lciIsCiAgICAic3RhcnRfY29udGFpbmVyIjogImNvZGV4LXJ1bm5lciIsCiAgICAiYXV0aF92b2x1bWUiOiAidmFyaWZsZXgtcnVubmVyLWF1dGgiLAogICAgImJ1aWxka2l0X2FkZHIiOiAidW5peDovLy9ydW4vYnVpbGRraXQvYnVpbGRraXRkLnNvY2siLAogICAgInNvdXJjZV9zaGEiOiAiYWJjMTIzNCIsCiAgICAia2VlcF90YWdzIjogMiwKICAgICJpbnNlY3VyZV90bHMiOiBmYWxzZSwKICAgICJpbnRlcnZhbCI6ICIxZCIKICB9Cl0KYGBgCgpUaGUgQ29kZXggcnVubmVyIGV4cG9zZXMgYEdFVCAvY29kZXgvdmVyc2lvbmAsIHJldHVybmluZyBpbnN0YWxsZWQgdmVyc2lvbiwKbGF0ZXN0IG5wbSB2ZXJzaW9uLCBhbmQgYSBgZHJpZnRfZGV0ZWN0ZWRgIGJvb2xlYW4uIEEgZHJpZnQgcmVzdWx0IGVucXVldWVzIGFuCmludGVybmFsIHJlYnVpbGQgam9iIGJlaGluZCBhbnkgYWN0aXZlIGBjb2RleGAgd29yay4gVGhlIGpvYiBpbnZva2VzIGBidWlsZGN0bGAKdGhyb3VnaCB0aGUgbW91bnRlZCBCdWlsZEtpdCBzb2NrZXQgYWZ0ZXIgc2hhbGxvdy1jbG9uaW5nIHRoZSBjdXJyZW50IGBtYWluYApicmFuY2ggb2YgYG0zcnJ5bTRuL3ZhcmlmbGV4YCwgYnVpbGRzIGl0cyBgcnVubmVyL2Agc291cmNlIHdpdGgKYENPREVYX1ZFUlNJT049PHRhcmdldD5gLCB0YWdzIHRoZSBpbWFnZSBhcwpgPHJlZ2lzdHJ5Pi88cmVwb3NpdG9yeT46PGNvZGV4LXZlcnNpb24+LTxyZXBvLXNob3J0LXNoYT5gLCBwdXNoZXMgaXQgdG8gWm90LApydW5zIGBzY3JpcHRzL3BydW5lX3pvdF9pbWFnZV90YWdzLnB5YCB0byBrZWVwIGN1cnJlbnQgcGx1cyBOLTEsIHNuYXBzaG90cyB0aGUKcnVubmluZyBjb250YWluZXIsIGFuZCByZXBsYWNlcyBpdCB0aHJvdWdoIERvY2toYW5kIHVzaW5nIHRoYXQgaW5zcGVjdGVkCmNvbmZpZ3VyYXRpb24gd2l0aCB0aGUgbmV3bHkgYnVpbHQgaW1hZ2UgcmVmZXJlbmNlLiBJdCBpbmRlcGVuZGVudGx5IHZlcmlmaWVzCnRoZSByZXBsYWNlbWVudCdzIHJ1bm5pbmcgc3RhdGUgYW5kIGltYWdlLCB0aGVuIHZlcmlmaWVzIHRoYXQKYHZhcmlmbGV4LXJ1bm5lci1hdXRoYCBpcyBzdGlsbCBtb3VudGVkIGFmdGVyIHRoZSBzd2FwLgpJZiByZXBsYWNlbWVudCBvciBwb3N0LWRlcGxveSB2b2x1bWUgdmVyaWZpY2F0aW9uIGZhaWxzLCB0aGUgam9iIHJlY3JlYXRlcyB0aGUKcHJldmlvdXMgaW1hZ2UgYW5kIGNvbmZpZ3VyYXRpb24gZnJvbSB0aGUgc25hcHNob3QgYW5kIGluZGVwZW5kZW50bHkgdmVyaWZpZXMKdGhhdCB0aGUgcmVzdG9yZWQgY29udGFpbmVyIGlzIHJ1bm5pbmcuIFRoaXMgcmVjcmVhdGUgc3RlcCBpcyByZXF1aXJlZDogbWVyZWx5CnN0b3BwaW5nIGFuZCBzdGFydGluZyB0aGUgZXhpc3RpbmcgY29udGFpbmVyIGNhbm5vdCBjaGFuZ2UgaXRzIGltYWdlIHJlZmVyZW5jZS4KClRoZSBWYXJpZmxleCBjb250YWluZXIgbXVzdCBtb3VudCB0aGUgaG9zdCBCdWlsZEtpdCBzb2NrZXQgZGlyZWN0b3J5IGF0IHRoZQpzYW1lIGluLWNvbnRhaW5lciBwYXRoIHVzZWQgYnkgdGhlIENyYXRlU3B5IHJ1bm5lcjoKCmBgYHlhbWwKZ3JvdXBfYWRkOgogIC0gIjAiCnZvbHVtZXM6CiAgLSAvREFUQS9BcHBEYXRhL2J1aWxka2l0L3NvY2tldDovcnVuL2J1aWxka2l0CmBgYAoKVGhlIEJ1aWxkS2l0IHNvY2tldCBpcyBncm91cC1yZWFkYWJsZSBieSBHSUQgYDBgOyBgZ3JvdXBfYWRkYCBsZXRzIHRoZQpub24tcm9vdCBWYXJpZmxleCBwcm9jZXNzIG9wZW4gdGhlIHNvY2tldCB3aXRob3V0IGNoYW5naW5nIHRoZSBjb250YWluZXIncwpwcmltYXJ5IHVzZXIuCgpUaGUgcHJvZHVjdGlvbiBjb21wb3NlIGZpbGUgaXMgYHRhc2stcnVubmVyLWNvbXBvc2UueWFtbGAgYXQgdGhlIHJlcG9zaXRvcnkKcm9vdC4gSXQgaXMgZ2l0aWdub3JlZCAoaXQgaG9sZHMgcmVhbCBjcmVkZW50aWFscyDigJQgYEdJVEhVQl9UT0tFTmAsCmBUQVNLX1JVTk5FUl9ET0NLSEFORF9UT0tFTmApIGFuZCBpcyB0aGUgYWN0dWFsLCBsaXZlIHNvdXJjZSBvZiB0cnV0aCBmb3IgdGhlCnJ1bm5pbmcgY29udGFpbmVyJ3MgY29uZmlndXJhdGlvbjsgdGhlcmUgaXMgbm8gZXhhbXBsZSBjb21wb3NlIGZpbGUgY2hlY2tlZAppbnRvIHRoZSByZXBvc2l0b3J5LiBNYW51YWwgZGVwbG95cyBzaG91bGQgZWRpdCB0aGF0IGZpbGUgZGlyZWN0bHkgcmF0aGVyIHRoYW4KcmVidWlsZCB0aGUgYGRvY2tlciBydW5gIGludm9jYXRpb24gYmVsb3cgZnJvbSBzY3JhdGNoLgoKIyMgUnVubmVyIGNvbnRyYWN0CgpSZXF1aXJlZCBlbmRwb2ludHMgYXJlIGBQT1NUIC9leGVjdXRlYCwgYFBPU1QgL3Jlc3VtZWAsIGBHRVQgL3N0YXR1cy97ZXhlY3V0aW9uX2lkfWAsIGFuZCBgR0VUIC9yZXN1bHQve2V4ZWN1dGlvbl9pZH1gLiBgUE9TVCAvcmVzdW1lYCBhY2NlcHRzIHRoZSBvcmlnaW5hbCBleGVjdXRpb24gcmVxdWVzdCBwbHVzIGEgcGVyc2lzdGVkIGBzZXNzaW9uX2lkYDsgdGhlIENvZGV4IHJ1bm5lciBpbnZva2VzIGBjb2RleCBleGVjIHJlc3VtZWAgYW5kIGxvZ3MgYW4gZXhwbGljaXQgbWFya2VyIGJlZm9yZSBmYWxsaW5nIGJhY2sgdG8gYSBmcmVzaCBkaXNwYXRjaCBpZiByZXN1bWUgZmFpbHMuIE9uIHRpbWVvdXQgdGhlIG9yY2hlc3RyYXRvciBhbHNvIGF0dGVtcHRzIGBERUxFVEUgL2V4ZWN1dGUve2V4ZWN1dGlvbl9pZH1gLiBSdW5uZXJzIHNob3VsZCBpbXBsZW1lbnQgdGhhdCBvcHRpb25hbCBlbmRwb2ludCB0byBndWFyYW50ZWUgcmVtb3RlIHByb2Nlc3MgdGVybWluYXRpb247IG90aGVyd2lzZSB0aGUgdGFzayBpcyBzdGlsbCByZWNvcmRlZCBhcyBgdGltZW91dGAsIHdpdGggdGhlIGZhaWxlZCBjYW5jZWxsYXRpb24gbm90ZWQuCgojIyBSZXBvc2l0b3J5IHF1ZXVlcyBhbmQgZXBoZW1lcmFsIHJ1bm5lcnMKCmBydW5fdGFza2AgcGxhY2VzIGV2ZXJ5IGlzc3VlIGRpc3BhdGNoIGludG8gYSBTUUxpdGUtYmFja2VkIEZJRk8gcXVldWUga2V5ZWQgYnkKcmVwb3NpdG9yeSBhbmQgcmV0dXJucyBhIHJlY2VpcHQgd2l0aCBgdGFza19pZGAsIGBzdGF0dXNgLCBgcG9zaXRpb25gLApgcXVldWVfbGVuZ3RoYCwgYW5kIGBydW5uZXJgLiBBIHNpbmdsZSBzY2hlZHVsZXIgYWRtaXRzIHRoZSBvbGRlc3QgZWxpZ2libGUKcmVwb3NpdG9yeSBxdWV1ZSBoZWFkIHdoaWxlIGVuZm9yY2luZyB0aGUgY29uZmlndXJlZCBnbG9iYWwgY29udGFpbmVyIGNhcC4KRWFjaCBhZG1pdHRlZCB0YXNrIGdldHMgYSBmcmVzaCBEb2NraGFuZC1jcmVhdGVkIHJ1bm5lciB3aXRoIHRoZSBzaGFyZWQgYXV0aAp2b2x1bWUuIEl0IGlzIHN0b3BwZWQgYW5kIHJlbW92ZWQgYWZ0ZXIgc3VjY2VzcywgZmFpbHVyZSwgdGltZW91dCwgb3IgcXVvdGEKZXhoYXVzdGlvbi4gQSBmYWlsdXJlIGhhbHRzIG9ubHkgdGhhdCByZXBvc2l0b3J5J3MgcXVldWUuCklmIHRoZSBydW5uZXIgaW5zdGVhZCByZXBvcnRzIGBxdW90YV9leGNlZWRlZGAgZnJvbSBhIHN0cnVjdHVyZWQgcmF0ZS1saW1pdApldmVudCB3aXRoIGEgc2Vzc2lvbiBJRCBhbmQgSVNPIDg2MDEgYHJlc2V0c19hdGAgdGltZXN0YW1wLCB0aGUgaW50ZXJydXB0ZWQgdGFzawpyZXR1cm5zIHRvIHRoZSBoZWFkIG9mIHRoZSBxdWV1ZSBhbmQgdGhlIHF1ZXVlIGVudGVycyBhIGRpc3RpbmN0IHF1b3RhIGhhbHQuClJlY2VpcHRzIGZvciB3b3JrIGFkZGVkIGR1cmluZyB0aGF0IGhhbHQgaW5jbHVkZSBgcmVzdW1lc19hdGAuIEF0IHRoYXQgdGltZSBhCm5ldyBjb250YWluZXIgcmVzdW1lcyB0aGUgc2FtZSB0YXNrIHJvdyBhbmQgQ29kZXggc2Vzc2lvbiBiZWZvcmUgbGF0ZXIgcGVuZGluZyB3b3JrIHN0YXJ0cy4gUXVvdGEKcmVzcG9uc2VzIHdpdGhvdXQgYSB1c2FibGUgc3RydWN0dXJlZCByZXNldCB0aW1lc3RhbXAgcmVtYWluIGdlbmVyaWMgaGFsdHMuClBocmFzaW5nLW9ubHkgcXVvdGEgZGV0ZWN0aW9ucyBkZWxpYmVyYXRlbHkgZG8gbm90IGF1dG8tcmVzdW1lOiBDb2RleCdzIHJlbGF0aXZlCmR1cmF0aW9uIHRleHQgaXMgbmVpdGhlciBJU08tY29tcGF0aWJsZSBub3Igc3VmZmljaWVudGx5IHJlbGlhYmxlIHRvIHNjaGVkdWxlCnVuYXR0ZW5kZWQgd29yay4KUXVldWVzIGFyZSBpbmRlcGVuZGVudCBwZXIgcmVwb3NpdG9yeSBhbmQgc3Vydml2ZSBvcmNoZXN0cmF0b3IgcmVzdGFydHMsIGluY2x1ZGluZwpwZW5kaW5nIG9yZGVyLCBoYWx0IGRldGFpbHMsIHF1b3RhIHJlc3VtZSB0aW1lLCBhbmQgdGhlIGFjdGl2ZSB0YXNrIHJlZmVyZW5jZS4KQXQgc3RhcnR1cCBhbiBhY3RpdmUgdGFzayB3aXRoIGEgcnVubmVyIGV4ZWN1dGlvbiBJRCByZXN1bWVzIG1vbml0b3JpbmcgdGhhdApzYW1lIHJlbW90ZSBleGVjdXRpb24uIElmIG5vIGV4ZWN1dGlvbiBJRCB3YXMgcGVyc2lzdGVkLCBpdHMgcmVtb3RlIHN0YXRlIGlzCnVua25vd2FibGU6IHRoZSB0YXNrIGlzIG1hcmtlZCBmYWlsZWQgYW5kIHRoZSBxdWV1ZSBoYWx0cyBmb3Igb3BlcmF0b3IgcmV2aWV3LApwcmV2ZW50aW5nIGEgcG90ZW50aWFsbHkgZHVwbGljYXRlIGRpc3BhdGNoLiBUaGlzIGlzIHJlY29uY2lsaWF0aW9uLCBub3QgcmV0cnkuClVzZSB0aGUgYGNsZWFyX3J1bm5lcl9oYWx0YCB0b29sIHdpdGggYSByZXBvc2l0b3J5IG5hbWUgdG8gY2xlYXIgaXRzIGhhbHQgYW5kIHJlc3VtZSBpdHMKcmVtYWluaW5nIHBlbmRpbmcgaXRlbXMgd2l0aG91dCByZXRyeWluZyB0aGUgZmFpbGVkIGl0ZW0uIFVzZQpgY2FuY2VsX3F1ZXVlZF90YXNrYCB0byByZW1vdmUgYW5kIG1hcmsgb25lIHN0aWxsLXBlbmRpbmcgaXRlbSBhcyBgY2FuY2VsbGVkYDsKYWN0aXZlIHRhc2tzIG11c3QgaW5zdGVhZCB1c2UgdGhlIHJ1bm5lciBzaGltJ3MgZXhlY3V0aW9uLWNhbmNlbGxhdGlvbiBlbmRwb2ludC4KCiMjIERvY2tlcgoKYGBgYmFzaApkb2NrZXIgYnVpbGQgXAogIC0tYnVpbGQtYXJnICJUQVNLX1JVTk5FUl9TT1VSQ0VfU0hBPSQoZ2l0IHJldi1wYXJzZSAtLXNob3J0PTcgSEVBRCkiIFwKICAtdCB2YXJpZmxleDpsYXRlc3QgLgoKZG9ja2VyIHN0b3AgdmFyaWZsZXgKZG9ja2VyIHJtIHZhcmlmbGV4Cgpkb2NrZXIgcnVuIC1kIFwKICAtLW5hbWUgdmFyaWZsZXggXAogIC0tcmVzdGFydCB1bmxlc3Mtc3RvcHBlZCBcCiAgLS1ncm91cC1hZGQgMCBcCiAgLXAgNjAwMjo2MDAyIFwKICAtdiB2YXJpZmxleC1kYXRhOi9kYXRhIFwKICAtdiAvREFUQS9BcHBEYXRhL2J1aWxka2l0L3NvY2tldDovcnVuL2J1aWxka2l0IFwKICAtZSAnVEFTS19SVU5ORVJfUlVOTkVSUz17ImNvZGV4IjoiaHR0cDovLzE5Mi4xNjguMS42ODo3MDAwIn0nIFwKICAtZSAnVEFTS19SVU5ORVJfU0NIRURVTEVEX1RBU0tTPVtdJyBcCiAgLWUgJ1RBU0tfUlVOTkVSX09QU19JTUFHRV9DSEVDS1M9W10nIFwKICAtZSAiVEFTS19SVU5ORVJfUkVQT1M9JCh0ciAtZCAnXG4nIDwgZGVwbG95L3JlcG9zLmpzb24pIiBcCiAgLWUgJ1RBU0tfUlVOTkVSX1RJTUVPVVRfU0VDT05EUz0zNjAwJyBcCiAgLWUgJ1RBU0tfUlVOTkVSX0RPQ0tIQU5EX1VSTD1odHRwOi8vMTkyLjE2OC4xLjY4OjMwMDMnIFwKICAtZSAnVEFTS19SVU5ORVJfRE9DS0hBTkRfVE9LRU49PHJlZGFjdGVkPicgXAogIC1lICdUQVNLX1JVTk5FUl9ET0NLSEFORF9FTlY9MScgXAogIC1lICdHSVRIVUJfVE9LRU49PHJlZGFjdGVkPicgXAogIHZhcmlmbGV4OmxhdGVzdApgYGAKClRoaXMgY29tbWFuZCBpcyBpbGx1c3RyYXRpdmUgb2YgZXZlcnkgdmFyaWFibGUgYWN0dWFsbHkgaW4gdXNlIOKAlCBwcmVmZXIKZWRpdGluZyBgdGFzay1ydW5uZXItY29tcG9zZS55YW1sYCBkaXJlY3RseSAoc2VlIGFib3ZlKSBmb3IgcmVhbCBkZXBsb3lzLCBzaW5jZQppdCBhbHJlYWR5IGhvbGRzIHRoZSBsaXZlIGNyZWRlbnRpYWwgdmFsdWVzIGFuZCBzdGF5cyBpbiBzeW5jIHdpdGggd2hhdCdzCmFjdHVhbGx5IHJ1bm5pbmcuCgpTdXBwbHkgYEdJVEhVQl9UT0tFTmAgYXQgcnVudGltZTsgZG8gbm90IHN0b3JlIHRoZSB0b2tlbiBpbiB0aGUgcmVwb3NpdG9yeS4KClJ1biB0ZXN0cyBpbiBEb2NrZXI6CgpgYGBiYXNoCmRvY2tlciBidWlsZCAtdCB2YXJpZmxleDp0ZXN0IC1mIERvY2tlcmZpbGUudGVzdCAuCmRvY2tlciBydW4gLS1ybSB2YXJpZmxleDp0ZXN0CmBgYAoKVmVyaWZpZWQgdmlhIGF1dG9tYXRlZCBlbmQtdG8tZW5kIGRpc3BhdGNoLgoKIyMgQ0kvQ0QKClRoZSBtYW51YWxseSBkaXNwYXRjaGVkIGAuZ2l0aHViL3dvcmtmbG93cy9kZXYtYnVpbGQtZGVwbG95LnltbGAgY2FsbHMgdGhlCnJldXNhYmxlIHdvcmtmbG93IGluIGBwYWNpZmljLXNoaWZ0LWNpYC4gSXQgYnVpbGRzIHRocm91Z2ggdGhlIHNoYXJlZCBCdWlsZEtpdApkYWVtb24sIHB1c2hlcyBpbW11dGFibGUgYW5kIHJvbGxpbmcgZGV2ZWxvcG1lbnQgdGFncyB0byBab3QsIGFuZCByZXBsYWNlcyB0aGUKZXhpc3RpbmcgYHZhcmlmbGV4YCBjb250YWluZXIgdGhyb3VnaCBEb2NraGFuZC4gRGVwbG95bWVudAp1c2VzIHRoZSBydW5uaW5nIGNvbnRhaW5lcidzIGluc3BlY3RlZCBjb25maWd1cmF0aW9uIGFzIGl0cyB0ZW1wbGF0ZSBhbmQKY2hhbmdlcyBvbmx5IHRoZSBpbWFnZS4gR2VuZXJpYyBydW5uaW5nL2ltYWdlL0hUVFAgdmVyaWZpY2F0aW9uIGFuZCBhdXRvbWF0aWMKcm9sbGJhY2sgYXJlIHN1cHBsaWVkIGJ5IHRoZSBzaGFyZWQgd29ya2Zsb3cuCgpUaGUgcmVwb3NpdG9yeSByZXF1aXJlcyBhIHNlbGYtaG9zdGVkIHJ1bm5lciBsYWJlbGVkIGB6aW1hb3NgIGFuZApgdmFyaWZsZXhgLCBwbHVzIGBET0NLSEFORF9VUkxgIGFuZCBgRE9DS0hBTkRfVE9LRU5gIEFjdGlvbnMgc2VjcmV0cywgYmVmb3JlCnRoZSB3b3JrZmxvdyBjYW4gYmUgZGlzcGF0Y2hlZC4gUnVubmVyIGFuZCB0b2tlbiBwcm92aXNpb25pbmcgaXMgbWFuYWdlZApzZXBhcmF0ZWx5IGZyb20gdGhlIHJldXNhYmxlIHdvcmtmbG93LgoKIyMjIENvZGV4IHJ1bm5lcgoKQnVpbGQgYW5kIHJ1biB0aGUgcnVubmVyIHNlcGFyYXRlbHkgZnJvbSB0aGUgb3JjaGVzdHJhdG9yIOKAlCBzZWUKW2BydW5uZXIvUkVBRE1FLm1kYF0oLi4vcnVubmVyL1JFQURNRS5tZCkgZm9yIHBlci1jb250YWluZXIgY29uZmlndXJhdGlvbgoobW9kZWwgc2VsZWN0aW9uLCBNQ1Agc2VydmVyIHJlZ2lzdHJhdGlvbikuIEl0cyBDb2RleCBhdXRoZW50aWNhdGlvbiBpcwpzdG9yZWQgaW4gYSBuYW1lZCB2b2x1bWUsIHNoYXJlZCBhY3Jvc3MgZXZlcnkgZXBoZW1lcmFsIHNwYXduIHNvIGxvZ2luIG9ubHkKbmVlZHMgdG8gaGFwcGVuIG9uY2UuCgpgYGBiYXNoCmRvY2tlciBidWlsZCAtdCB2YXJpZmxleC1ydW5uZXI6bGF0ZXN0IHJ1bm5lci8KZG9ja2VyIHZvbHVtZSBjcmVhdGUgdmFyaWZsZXgtcnVubmVyLWF1dGgKCmRvY2tlciBydW4gLS1ybSAtaXQgXAogIC12IHZhcmlmbGV4LXJ1bm5lci1hdXRoOi9ob21lL2NvZGV4Ly5jb2RleCBcCiAgdmFyaWZsZXgtcnVubmVyOmxhdGVzdCBjb2RleCBsb2dpbiAtLWRldmljZS1hdXRoCgpkb2NrZXIgcnVuIC1kIFwKICAtLW5hbWUgdmFyaWZsZXgtcnVubmVyIFwKICAtLXJlc3RhcnQgdW5sZXNzLXN0b3BwZWQgXAogIC0tcHJpdmlsZWdlZCBcCiAgLS1ncm91cC1hZGQgIiQoc3RhdCAtYyAnJWcnIC92YXIvcnVuL2RvY2tlci5zb2NrKSIgXAogIC1wIDcwMDA6NzAwMCBcCiAgLXYgL3Zhci9ydW4vZG9ja2VyLnNvY2s6L3Zhci9ydW4vZG9ja2VyLnNvY2sgXAogIC12IHZhcmlmbGV4LXJ1bm5lci1hdXRoOi9ob21lL2NvZGV4Ly5jb2RleCBcCiAgLWUgJ0dJVEhVQl9UT0tFTj08cmVkYWN0ZWQ+JyBcCiAgdmFyaWZsZXgtcnVubmVyOmxhdGVzdAoKZG9ja2VyIGV4ZWMgdmFyaWZsZXgtcnVubmVyIGRvY2tlciB2ZXJzaW9uCmRvY2tlciBleGVjIHZhcmlmbGV4LXJ1bm5lciBkb2NrZXIgcHMKY3VybCBodHRwOi8vbG9jYWxob3N0OjcwMDAvY29kZXgvdmVyc2lvbgpgYGAKClByaXZpbGVnZWQgbW9kZSBhbGxvd3MgQ29kZXgncyBvd24gYHdvcmtzcGFjZS13cml0ZWAgc2FuZGJveCB0byBjcmVhdGUgYW5kCmNvbmZpZ3VyZSBpdHMgbmVzdGVkIExpbnV4IG5hbWVzcGFjZS4gVGhlIGhvc3QgRG9ja2VyIHNvY2tldCBhbmQgaXRzIGdyb3VwIElECmdpdmUgdGhlIG5vbi1yb290IGBjb2RleGAgdXNlciBhY2Nlc3MgdG8gdGhlIGhvc3QgZGFlbW9uOyB0aGUgaW1hZ2UgY29udGFpbnMKdGhlIERvY2tlciBDTEkgYW5kIEJ1aWxkeCBwbHVnaW4sIGJ1dCBubyBEb2NrZXIgZGFlbW9uLiBTdXBwbHkgYEdJVEhVQl9UT0tFTmAKYXQgcnVudGltZSBzbyB0aGUgZGlzcGF0Y2hlZCBhZ2VudCBjYW4gY2xvbmUsIHB1c2gsIGFuZCBvcGVuIGl0cyBQUi4gVGVzdCB0aGUKcnVubmVyIGltYWdlIHdpdGggYGRvY2tlciBidWlsZCAtdCB2YXJpZmxleC1ydW5uZXI6dGVzdCAtZiBydW5uZXIvRG9ja2VyZmlsZS50ZXN0IHJ1bm5lci8gJiYgZG9ja2VyIHJ1biAtLXJtIHZhcmlmbGV4LXJ1bm5lcjp0ZXN0YC4KCkluIG5vcm1hbCBvcGVyYXRpb24gdGhpcyBtYW51YWwgZmxvdyBpcyBvbmx5IG5lZWRlZCBvbmNlLCBmb3IgdGhlIGluaXRpYWwKYGNvZGV4IGxvZ2luYC4gQWN0dWFsIHRhc2sgZGlzcGF0Y2ggdXNlcyBlcGhlbWVyYWwsIERvY2toYW5kLXNwYXduZWQgcnVubmVyCmNvbnRhaW5lcnMgc2hhcmluZyB0aGlzIHNhbWUgYHZhcmlmbGV4LXJ1bm5lci1hdXRoYCB2b2x1bWUg4oCUIHNlZSAiUmVwb3NpdG9yeQpxdWV1ZXMgYW5kIGVwaGVtZXJhbCBydW5uZXJzIiBhYm92ZS4K
+# Pacific Shift Variflex
+
+FastAPI/SQLite orchestrator that dispatches GitHub issues to registry-configured runner HTTP shims and exposes four MCP tools.
+
+## Why this exists
+
+Most open-source AI coding agent orchestrators — [Bernstein](https://github.com/chernistry/bernstein), [OpenHands](https://github.com/All-Hands-AI/OpenHands), [Microsoft Conductor](https://github.com/microsoft/conductor), and others surveyed in this space — don't document handling coding-agent rate limits as a first-class case. In practice, that's the first thing that actually happens on any sustained run.
+
+Variflex exists to survive that. It's a self-hosted orchestrator for AI coding agents (Codex today) built around:
+
+- **Per-repository FIFO queues** — one task container per repository at a time, with a configurable global container cap.
+- **Quota-exhaustion detection and resume** — a structured rate-limit response with an ISO 8601 reset time returns the interrupted task to the head of its queue and automatically resumes the same session once the quota clock allows, instead of losing the work or requiring a manual restart.
+- **Session-durable queues** — pending order, halt state, and the active task reference all survive an orchestrator restart.
+- **Human-controlled promotion** — every dispatch traces back to a GitHub issue; `dev` builds automatically, `main`/stable only moves on explicit human action.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `TASK_RUNNER_RUNNERS` | `{}` | JSON mapping runner names to internal URLs, e.g. `{"codex":"http://192.168.1.68:7000"}` |
+| `TASK_RUNNER_SCHEDULED_TASKS` | `[]` | JSON array of scheduled issue dispatches |
+| `TASK_RUNNER_OPS_IMAGE_CHECKS` | `[]` | JSON array of scheduled operational image version-drift checks and rebuild jobs |
+| `TASK_RUNNER_REPOS` | `[]` | JSON array of onboarded repository and dev/main deploy-target objects |
+| `TASK_RUNNER_DATABASE` | `/data/tasks.db` | SQLite database path |
+| `TASK_RUNNER_TIMEOUT_SECONDS` | `600` | Hard orchestration timeout |
+| `TASK_RUNNER_OUTPUT_CAP_BYTES` | `1000000` | Maximum retained runner log size |
+| `TASK_RUNNER_POLL_INTERVAL_SECONDS` | `2` | Runner status polling interval |
+| `GITHUB_TOKEN` | unset | Optional token for private repositories or higher API limits |
+| `TASK_RUNNER_DOCKHAND_URL` | unset | Dockhand REST API base URL for internal container deploy operations |
+| `TASK_RUNNER_DOCKHAND_TOKEN` | unset | Dedicated Variflex Dockhand API token (`dh_...`); do not reuse `dockhand-mcp` credentials |
+| `TASK_RUNNER_DOCKHAND_ENV` | unset | Optional Dockhand environment ID for container deploy operations |
+| `TASK_RUNNER_DOCKHAND_VERIFY_TIMEOUT_SECONDS` | `60` | Maximum time to wait for a started container to verify as running or healthy |
+| `TASK_RUNNER_DOCKHAND_VERIFY_INTERVAL_SECONDS` | `2` | Poll interval while verifying a started container |
+| `TASK_RUNNER_MAX_CONCURRENT_CONTAINERS` | `3` | Global ceiling for simultaneously active per-task runner containers |
+| `TASK_RUNNER_RUNNER_IMAGE` | `codex-runner:latest` | Image used for ephemeral runner containers |
+| `TASK_RUNNER_RUNNER_AUTH_VOLUME` | `variflex-runner-auth` | Shared Codex auth/session volume mounted into each runner |
+| `TASK_RUNNER_RUNNER_PORT` | `7000` | Runner shim port inside the ephemeral container |
+| `TASK_RUNNER_RUNNER_NETWORK` | `bridge` | Docker network mode supplied to Dockhand at container creation |
+| `TASK_RUNNER_SOURCE_SHA` | `unknown` | Source revision baked into the Variflex image and used in Ops Images tags |
+
+The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
+
+### Repository registry
+
+Every dispatched repository must appear in `TASK_RUNNER_REPOS`. Each entry
+selects one configured runner and records both its automatically deployed `dev`
+target and human-promoted `main` target. Targets require `container`, `volume`,
+and a positive integer `port`. Optional `health_path` and `expected_content`
+values override the reusable workflow's generic HTTP check. `health_path`
+defaults to `/` in that workflow when omitted.
+Repositories may also set optional `model` and `mcp_servers` values. Variflex
+passes those into each spawned container as `CODEX_RUNNER_MODEL` and
+`CODEX_RUNNER_MCP_SERVERS`; runner-side consumption is tracked by issue #86.
+
+The live repository configuration is maintained in
+[`deploy/repos.json`](deploy/repos.json). Set the environment variable from the
+file when starting the service, for example:
+
+```bash
+TASK_RUNNER_REPOS="$(tr -d '\n' < deploy/repos.json)"
+export TASK_RUNNER_REPOS
+```
+
+The fantasy-football repositories use the canonical runner with their
+lower-cost model and `ff-mcp`/`nfl-mcp` endpoints set per repository. Their
+sentinel deploy targets preserve the existing no-deploy behavior: those tool
+services are operated independently and task dispatch must not replace them.
+
+`GET /api/repos` exposes the parsed, validated values to internal pipeline and
+dashboard consumers. Dispatch rejects missing repositories and runner
+mismatches before creating a task row. `pacific-shift-mcp-proxy` is deliberately
+absent because its Home Assistant add-on deployment does not use this container
+target model.
+
+Dockhand configuration is an internal Variflex capability for ephemeral runner lifecycle and Ops Images
+deploy steps. It is not exposed as an MCP tool. The token must be supplied at
+runtime through `TASK_RUNNER_DOCKHAND_TOKEN` and should be generated under a
+dedicated Variflex account.
+
+### Scheduled tasks
+
+Issue scheduled tasks reuse the same dispatch path as the `run_task` MCP tool. When a
+configured interval fires, Variflex creates a normal task row for the target
+repository issue and runner. The fire is visible in container logs and in
+`list_tasks`.
+
+Configure schedules with `TASK_RUNNER_SCHEDULED_TASKS`:
+
+```json
+[
+  {
+    "name": "daily-codex-health-check",
+    "repo": "m3rrym4n/variflex",
+    "issue_number": 15,
+    "runner": "codex",
+    "interval": "1d"
+  }
+]
+```
+
+`interval` accepts a positive number of seconds or a string with one of these
+suffixes:
+
+| Suffix | Meaning | Example |
+|---|---:|---|
+| `s` | seconds | `120s` |
+| `m` | minutes | `2m` |
+| `h` | hours | `6h` |
+| `d` | days | `1d` |
+
+To add a scheduled job, add an object to `TASK_RUNNER_SCHEDULED_TASKS` and
+restart the container. To remove a scheduled job, remove its object from the
+array and restart the container. The `runner` value must match a key in
+`TASK_RUNNER_RUNNERS`.
+
+Ops Image checks use the same scheduler and the same per-runner queue as normal
+issue dispatches. They call the configured runner's version endpoint and, when
+drift is detected, create a normal task row tied to a fixed trace issue. The
+queued internal job builds, pushes, prunes, deploys, and verifies the rebuilt
+Codex runner image. The fixed trace issue preserves the "written issue behind
+every action" rule without creating a new GitHub issue for every maintenance
+cycle.
+
+Configure Ops Image checks with `TASK_RUNNER_OPS_IMAGE_CHECKS`:
+
+```json
+[
+  {
+    "name": "daily-codex-runner-rebuild-check",
+    "runner": "codex",
+    "repo": "m3rrym4n/variflex",
+    "issue_number": 35,
+    "registry": "zot.lan:5000",
+    "repository": "codex-runner",
+    "stop_container": "codex-runner",
+    "start_container": "codex-runner",
+    "auth_volume": "variflex-runner-auth",
+    "buildkit_addr": "unix:///run/buildkit/buildkitd.sock",
+    "source_sha": "abc1234",
+    "keep_tags": 2,
+    "insecure_tls": false,
+    "interval": "1d"
+  }
+]
+```
+
+The Codex runner exposes `GET /codex/version`, returning installed version,
+latest npm version, and a `drift_detected` boolean. A drift result enqueues an
+internal rebuild job behind any active `codex` work. The job invokes `buildctl`
+through the mounted BuildKit socket after shallow-cloning the current `main`
+branch of `m3rrym4n/variflex`, builds its `runner/` source with
+`CODEX_VERSION=<target>`, tags the image as
+`<registry>/<repository>:<codex-version>-<repo-short-sha>`, pushes it to Zot,
+runs `scripts/prune_zot_image_tags.py` to keep current plus N-1, snapshots the
+running container, and replaces it through Dockhand using that inspected
+configuration with the newly built image reference. It independently verifies
+the replacement's running state and image, then verifies that
+`variflex-runner-auth` is still mounted after the swap.
+If replacement or post-deploy volume verification fails, the job recreates the
+previous image and configuration from the snapshot and independently verifies
+that the restored container is running. This recreate step is required: merely
+stopping and starting the existing container cannot change its image reference.
+
+The Variflex container must mount the host BuildKit socket directory at the
+same in-container path used by the CrateSpy runner:
+
+```yaml
+group_add:
+  - "0"
+volumes:
+  - /DATA/AppData/buildkit/socket:/run/buildkit
+```
+
+The BuildKit socket is group-readable by GID `0`; `group_add` lets the
+non-root Variflex process open the socket without changing the container's
+primary user.
+
+The production compose file is `task-runner-compose.yaml` at the repository
+root. It is gitignored (it holds real credentials — `GITHUB_TOKEN`,
+`TASK_RUNNER_DOCKHAND_TOKEN`) and is the actual, live source of truth for the
+running container's configuration; there is no example compose file checked
+into the repository. Manual deploys should edit that file directly rather than
+rebuild the `docker run` invocation below from scratch.
+
+## Runner contract
+
+Required endpoints are `POST /execute`, `POST /resume`, `GET /status/{execution_id}`, and `GET /result/{execution_id}`. `POST /resume` accepts the original execution request plus a persisted `session_id`; the Codex runner invokes `codex exec resume` and logs an explicit marker before falling back to a fresh dispatch if resume fails. On timeout the orchestrator also attempts `DELETE /execute/{execution_id}`. Runners should implement that optional endpoint to guarantee remote process termination; otherwise the task is still recorded as `timeout`, with the failed cancellation noted.
+
+## Repository queues and ephemeral runners
+
+`run_task` places every issue dispatch into a SQLite-backed FIFO queue keyed by
+repository and returns a receipt with `task_id`, `status`, `position`,
+`queue_length`, and `runner`. A single scheduler admits the oldest eligible
+repository queue head while enforcing the configured global container cap.
+Each admitted task gets a fresh Dockhand-created runner with the shared auth
+volume. It is stopped and removed after success, failure, timeout, or quota
+exhaustion. A failure halts only that repository's queue.
+If the runner instead reports `quota_exceeded` from a structured rate-limit
+event with a session ID and ISO 8601 `resets_at` timestamp, the interrupted task
+returns to the head of the queue and the queue enters a distinct quota halt.
+Receipts for work added during that halt include `resumes_at`. At that time a
+new container resumes the same task row and Codex session before later pending work starts. Quota
+responses without a usable structured reset timestamp remain generic halts.
+Phrasing-only quota detections deliberately do not auto-resume: Codex's relative
+duration text is neither ISO-compatible nor sufficiently reliable to schedule
+unattended work.
+Queues are independent per repository and survive orchestrator restarts, including
+pending order, halt details, quota resume time, and the active task reference.
+At startup an active task with a runner execution ID resumes monitoring that
+same remote execution. If no execution ID was persisted, its remote state is
+unknowable: the task is marked failed and the queue halts for operator review,
+preventing a potentially duplicate dispatch. This is reconciliation, not retry.
+Use the `clear_runner_halt` tool with a repository name to clear its halt and resume its
+remaining pending items without retrying the failed item. Use
+`cancel_queued_task` to remove and mark one still-pending item as `cancelled`;
+active tasks must instead use the runner shim's execution-cancellation endpoint.
+
+## Docker
+
+```bash
+docker build \
+  --build-arg "TASK_RUNNER_SOURCE_SHA=$(git rev-parse --short=7 HEAD)" \
+  -t variflex:latest .
+
+docker stop variflex
+docker rm variflex
+
+docker run -d \
+  --name variflex \
+  --restart unless-stopped \
+  --group-add 0 \
+  -p 6002:6002 \
+  -v variflex-data:/data \
+  -v /DATA/AppData/buildkit/socket:/run/buildkit \
+  -e 'TASK_RUNNER_RUNNERS={"codex":"http://192.168.1.68:7000"}' \
+  -e 'TASK_RUNNER_SCHEDULED_TASKS=[]' \
+  -e 'TASK_RUNNER_OPS_IMAGE_CHECKS=[]' \
+  -e "TASK_RUNNER_REPOS=$(tr -d '\n' < deploy/repos.json)" \
+  -e 'TASK_RUNNER_TIMEOUT_SECONDS=3600' \
+  -e 'TASK_RUNNER_DOCKHAND_URL=http://192.168.1.68:3003' \
+  -e 'TASK_RUNNER_DOCKHAND_TOKEN=<redacted>' \
+  -e 'TASK_RUNNER_DOCKHAND_ENV=1' \
+  -e 'GITHUB_TOKEN=<redacted>' \
+  variflex:latest
+```
+
+This command is illustrative of every variable actually in use — prefer
+editing `task-runner-compose.yaml` directly (see above) for real deploys, since
+it already holds the live credential values and stays in sync with what's
+actually running.
+
+Supply `GITHUB_TOKEN` at runtime; do not store the token in the repository.
+
+Run tests in Docker:
+
+```bash
+docker build -t variflex:test -f Dockerfile.test .
+docker run --rm variflex:test
+```
+
+Verified via automated end-to-end dispatch.
+
+## CI/CD
+
+The manually dispatched `.github/workflows/dev-build-deploy.yml` calls the
+reusable workflow in `pacific-shift-ci`. It builds through the shared BuildKit
+daemon, pushes immutable and rolling development tags to Zot, and replaces the
+existing `variflex` container through Dockhand. Deployment
+uses the running container's inspected configuration as its template and
+changes only the image. Generic running/image/HTTP verification and automatic
+rollback are supplied by the shared workflow.
+
+The repository requires a self-hosted runner labeled `zimaos` and
+`variflex`, plus `DOCKHAND_URL` and `DOCKHAND_TOKEN` Actions secrets, before
+the workflow can be dispatched. Runner and token provisioning is managed
+separately from the reusable workflow.
+
+### Codex runner
+
+Build and run the runner separately from the orchestrator — see
+[`runner/README.md`](../runner/README.md) for per-container configuration
+(model selection, MCP server registration). Its Codex authentication is
+stored in a named volume, shared across every ephemeral spawn so login only
+needs to happen once.
+
+```bash
+docker build -t variflex-runner:latest runner/
+docker volume create variflex-runner-auth
+
+docker run --rm -it \
+  -v variflex-runner-auth:/home/codex/.codex \
+  variflex-runner:latest codex login --device-auth
+
+docker run -d \
+  --name variflex-runner \
+  --restart unless-stopped \
+  --privileged \
+  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+  -p 7000:7000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v variflex-runner-auth:/home/codex/.codex \
+  -e 'GITHUB_TOKEN=<redacted>' \
+  variflex-runner:latest
+
+docker exec variflex-runner docker version
+docker exec variflex-runner docker ps
+curl http://localhost:7000/codex/version
+```
+
+Privileged mode allows Codex's own `workspace-write` sandbox to create and
+configure its nested Linux namespace. The host Docker socket and its group ID
+give the non-root `codex` user access to the host daemon; the image contains
+the Docker CLI and Buildx plugin, but no Docker daemon. Supply `GITHUB_TOKEN`
+at runtime so the dispatched agent can clone, push, and open its PR. Test the
+runner image with `docker build -t variflex-runner:test -f runner/Dockerfile.test runner/ && docker run --rm variflex-runner:test`.
+
+In normal operation this manual flow is only needed once, for the initial
+`codex login`. Actual task dispatch uses ephemeral, Dockhand-spawned runner
+containers sharing this same `variflex-runner-auth` volume — see "Repository
+queues and ephemeral runners" above.
