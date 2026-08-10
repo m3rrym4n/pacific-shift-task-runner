@@ -27,26 +27,23 @@ Each directory owns its Dockerfile, dependencies, tests, and build context. Chan
 
 ## Building
 
-Both components build independently from their own directory:
+The orchestrator is the always-on service and the one most people building this repo actually need:
 
 ```bash
-# Orchestrator
 docker build \
   --build-arg "TASK_RUNNER_SOURCE_SHA=$(git rev-parse --short=7 HEAD)" \
   -t variflex:latest .
-
-# Runner
-docker build -t variflex-runner:latest runner/
 ```
 
-Each has its own test image too:
+Test image:
 
 ```bash
 docker build -t variflex:test -f Dockerfile.test . && docker run --rm variflex:test
-docker build -t variflex-runner:test -f runner/Dockerfile.test runner/ && docker run --rm variflex-runner:test
 ```
 
-Full run instructions — required environment variables, the repository registry, scheduled tasks, Ops Image checks, and the real production compose file — are in [`orchestrator/README.md`](orchestrator/README.md). Runner-side per-container configuration (model selection, MCP server registration) is in [`runner/README.md`](runner/README.md).
+Full run instructions — required environment variables, the repository registry, scheduled tasks, Ops Image checks, and the real production compose file — are in [`orchestrator/README.md`](orchestrator/README.md).
+
+Building and running the runner (`runner/`) is a separate, ancillary concern — normally handled by Dockhand spawning ephemeral containers on demand, not something built directly as part of standing up the orchestrator. Its build/run steps, including the one-time Codex device-auth setup, are documented in [`orchestrator/README.md`'s "Codex runner" section](orchestrator/README.md#codex-runner). Runner-side per-container configuration (model selection, MCP server registration) is in [`runner/README.md`](runner/README.md).
 
 ## Compatibility policy
 
