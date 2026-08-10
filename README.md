@@ -1,4 +1,4 @@
-&lt;img width=&quot;1536&quot; height=&quot;1024&quot; alt=&quot;ChatGPT Image Aug 10, 2026, 01_29_08 PM&quot; src=&quot;https://github.com/user-attachments/assets/22c04ebb-7591-4c45-bf90-92fb9812351f&quot; /&gt;
+<img width="1536" height="1024" alt="ChatGPT Image Aug 10, 2026, 01_29_08 PM" src="https://github.com/user-attachments/assets/22c04ebb-7591-4c45-bf90-92fb9812351f" />
 
 # Variflex
 
