@@ -1,3 +1,7 @@
+<img width="1536" height="1024" alt="ChatGPT Image Aug 10, 2026, 01_29_08 PM" src="https://github.com/user-attachments/assets/22c04ebb-7591-4c45-bf90-92fb9812351f" />
+
+
+
 # Variflex
 
 Variflex dispatches GitHub issue work to isolated coding-agent runners and reports structured results. This repository is the single source of truth for the product:
