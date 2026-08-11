@@ -1,3 +1,4 @@
+# Factory deployment smoke test
 from contextlib import asynccontextmanager
 from typing import Literal
 
