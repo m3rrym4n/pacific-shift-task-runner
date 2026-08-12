@@ -12,3 +12,9 @@ At startup, `CODEX_RUNNER_MCP_SERVERS` may contain a JSON object mapping MCP ser
 Each configured server is registered with `codex mcp add`. If the variable is unset or empty, no
 extra MCP servers are registered. Invalid configuration fails startup instead of silently running
 with missing integrations.
+
+The orchestrator also supplies `TASK_RUNNER_GIT_HOST` for every task and
+`TASK_RUNNER_GIT_HOST_BASE_URL` for Forgejo tasks. Before Codex starts, the entrypoint uses the
+matching `GITHUB_TOKEN` or `FORGEJO_TOKEN` to export a host-scoped Git `Authorization`
+extraheader. If the matching token is absent, Git remains unconfigured so public clones continue
+to work normally.

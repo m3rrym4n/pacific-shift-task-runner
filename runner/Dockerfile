@@ -23,7 +23,7 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY __init__.py main.py configure_mcp.py ./codex_runner/
+COPY __init__.py main.py configure_git.py configure_mcp.py ./codex_runner/
 COPY entrypoint.sh /usr/local/bin/codex-runner-entrypoint
 
 RUN useradd --create-home --uid 10001 codex \

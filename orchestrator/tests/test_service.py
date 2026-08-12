@@ -511,6 +511,9 @@ async def test_dispatch_selects_forgejo_client_from_repo_host(tmp_path):
     assert "Forgejo issue" in runner.prompt
     assert "https://forgejo.example.com/owner/repo" in runner.prompt
     assert "GitHub issue" not in runner.prompt
+    environment = service.dockhand.spawned[0]["environment"]
+    assert environment["TASK_RUNNER_GIT_HOST"] == "forgejo"
+    assert environment["TASK_RUNNER_GIT_HOST_BASE_URL"] == "https://forgejo.example.com"
 
 
 @pytest.mark.asyncio
@@ -521,6 +524,8 @@ async def test_spawn_environment_includes_github_token(tmp_path):
     await asyncio.gather(*service._jobs)
 
     assert service.dockhand.spawned[0]["environment"]["GITHUB_TOKEN"] == "test-token"
+    assert service.dockhand.spawned[0]["environment"]["TASK_RUNNER_GIT_HOST"] == "github"
+    assert "TASK_RUNNER_GIT_HOST_BASE_URL" not in service.dockhand.spawned[0]["environment"]
 
 
 @pytest.mark.asyncio
