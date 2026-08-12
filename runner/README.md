@@ -16,5 +16,8 @@ with missing integrations.
 The orchestrator also supplies `TASK_RUNNER_GIT_HOST` for every task and
 `TASK_RUNNER_GIT_HOST_BASE_URL` for Forgejo tasks. Before Codex starts, the entrypoint uses the
 matching `GITHUB_TOKEN` or `FORGEJO_TOKEN` to export a host-scoped Git `Authorization`
-extraheader. If the matching token is absent, Git remains unconfigured so public clones continue
-to work normally.
+extraheader. For GitHub tasks it also fetches the authenticated `/user` profile at startup and
+configures `user.name` plus the account's `{id}+{login}@users.noreply.github.com` address from
+that response. Startup fails if GitHub does not return a valid numeric ID and login, preventing
+commits with a guessed or stale identity. If the matching token is absent, Git remains
+unconfigured so public clones continue to work normally.
