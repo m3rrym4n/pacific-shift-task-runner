@@ -435,6 +435,8 @@ class TaskService:
                 environment["CODEX_RUNNER_MCP_SERVERS"] = json.dumps(dict(repo_config.mcp_servers))
             if self.settings.github_token:
                 environment["GITHUB_TOKEN"] = self.settings.github_token
+            if self.settings.forgejo_token:
+                environment["FORGEJO_TOKEN"] = self.settings.forgejo_token
             self.database.update(task_id, status="spawning", runner_container=container_name)
             managed_container = True
             runner_url = await self.dockhand.spawn_runner(
