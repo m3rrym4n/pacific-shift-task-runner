@@ -212,6 +212,7 @@ class Settings:
     output_cap_bytes: int = 1_000_000
     poll_interval_seconds: float = 2
     github_token: str | None = None
+    forgejo_token: str | None = None
     dockhand_url: str | None = None
     dockhand_token: str | None = None
     dockhand_env: int | None = None
@@ -280,6 +281,7 @@ class Settings:
             output_cap_bytes=int(os.getenv("TASK_RUNNER_OUTPUT_CAP_BYTES", "1000000")),
             poll_interval_seconds=float(os.getenv("TASK_RUNNER_POLL_INTERVAL_SECONDS", "2")),
             github_token=os.getenv("GITHUB_TOKEN"),
+            forgejo_token=os.getenv("FORGEJO_TOKEN"),
             dockhand_url=os.getenv("TASK_RUNNER_DOCKHAND_URL"),
             dockhand_token=os.getenv("TASK_RUNNER_DOCKHAND_TOKEN"),
             dockhand_env=dockhand_env,
