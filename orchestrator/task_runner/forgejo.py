@@ -7,33 +7,38 @@ import httpx
 from .git_host import CommentRef, GitHostError, IssueContext, Milestone, PullRequestRef
 
 
-class GitHubClient:
+class ForgejoClient:
     def __init__(
-        self, token: str | None = None, client: httpx.AsyncClient | None = None
+        self,
+        host_base_url: str,
+        token: str | None = None,
+        client: httpx.AsyncClient | None = None,
     ):
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
+        headers = {"Accept": "application/json"}
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = f"token {token}"
         self.client = client or httpx.AsyncClient(
-            base_url="https://api.github.com", headers=headers, timeout=30
+            base_url=f"{host_base_url.rstrip('/')}/api/v1", headers=headers, timeout=30
         )
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         response = await self.client.request(method, path, **kwargs)
         if response.is_error:
             try:
-                message = response.json().get("message", response.text)
+                payload = response.json()
+                message = (
+                    payload.get("message", response.text)
+                    if isinstance(payload, dict)
+                    else response.text
+                )
             except ValueError:
                 message = response.text or response.reason_phrase
-            raise GitHostError("GitHub", response.status_code, str(message))
+            raise GitHostError("Forgejo", response.status_code, str(message))
         return response
 
     async def get_issue_context(self, repo: str, number: int) -> IssueContext:
-        issue = (await self._request("GET", f"/repos/{repo}/issues/{number}")).json()
-        return IssueContext(title=issue["title"], body=issue.get("body") or "")
+        value = (await self._request("GET", f"/repos/{repo}/issues/{number}")).json()
+        return IssueContext(title=value["title"], body=value.get("body") or "")
 
     async def get_text_file(
         self, repo: str, path: str, ref: str | None = None
@@ -45,33 +50,28 @@ class GitHubClient:
         if response.status_code == 404:
             return None
         if response.is_error:
-            return await self._raise_response(response)
+            await self._request_from_response(response)
         return base64.b64decode(response.json()["content"]).decode("utf-8")
 
-    async def _raise_response(self, response: httpx.Response) -> Any:
+    async def _request_from_response(self, response: httpx.Response) -> None:
         try:
-            message = response.json().get("message", response.text)
+            payload = response.json()
+            message = (
+                payload.get("message", response.text)
+                if isinstance(payload, dict)
+                else response.text
+            )
         except ValueError:
             message = response.text or response.reason_phrase
-        raise GitHostError("GitHub", response.status_code, str(message))
-
-    async def get_context(self, repo: str, issue_number: int) -> tuple[str, str, str]:
-        """Compatibility wrapper for the existing prompt-building service."""
-        issue = await self.get_issue_context(repo, issue_number)
-        agents = await self.get_text_file(repo, "AGENTS.md")
-        return (
-            agents or "(No AGENTS.md found in the target repository.)",
-            issue.title,
-            issue.body,
-        )
+        raise GitHostError("Forgejo", response.status_code, str(message))
 
     async def dispatch_workflow(
-        self, repo: str, workflow: str, ref: str, inputs: dict[str, Any] | None = None
+        self, repo: str, workflow: str, ref: str, inputs: dict[str, Any]
     ) -> None:
         await self._request(
             "POST",
             f"/repos/{repo}/actions/workflows/{quote(workflow, safe='')}/dispatches",
-            json={"ref": ref, "inputs": inputs or {}},
+            json={"ref": ref, "inputs": inputs},
         )
 
     async def create_pull_request(
@@ -97,7 +97,7 @@ class GitHubClient:
     @staticmethod
     def _milestone(value: dict[str, Any]) -> Milestone:
         return Milestone(
-            id=str(value["number"]),
+            id=str(value["id"]),
             title=value["title"],
             description=value.get("description"),
             state=value["state"],
@@ -112,11 +112,11 @@ class GitHubClient:
                 await self._request(
                     "GET",
                     f"/repos/{repo}/milestones",
-                    params={"state": state, "per_page": 100, "page": page},
+                    params={"state": state, "limit": 50, "page": page},
                 )
             ).json()
             milestones.extend(self._milestone(value) for value in values)
-            if len(values) < 100:
+            if len(values) < 50:
                 return milestones
             page += 1
 
@@ -142,6 +142,13 @@ class GitHubClient:
         return self._milestone(value)
 
     async def update_milestone(self, repo: str, id: str, **fields: Any) -> Milestone:
+        """Update supported fields; Forgejo 16 cannot clear an existing deadline.
+
+        The server returns 200 for ``due_on: null`` while retaining the old value,
+        so rejecting that operation prevents callers from observing false success.
+        """
+        if "due_on" in fields and fields["due_on"] is None:
+            raise ValueError("Forgejo does not support clearing a milestone deadline")
         value = (
             await self._request(
                 "PATCH", f"/repos/{repo}/milestones/{quote(id, safe='')}", json=fields
