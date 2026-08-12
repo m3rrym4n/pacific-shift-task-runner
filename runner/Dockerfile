@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 ARG CODEX_VERSION=0.145.0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-venv git gh ca-certificates openssh-client \
+    && apt-get install -y --no-install-recommends python3 python3-venv git gh jq ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global "@openai/codex@${CODEX_VERSION}" \
     && npx --yes playwright install --with-deps chrome \
