@@ -52,6 +52,8 @@ class RepoConfig:
     main: DeployTarget
     model: str | None = None
     mcp_servers: tuple[tuple[str, str], ...] = ()
+    host: str = "github"
+    host_base_url: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RepoConfig":
@@ -71,7 +73,24 @@ class RepoConfig:
             for name, url in raw_mcp_servers.items()
         ):
             raise ValueError("repo config mcp_servers must be an object of name to URL")
-        return cls(repo, runner, dev, main, model, tuple(raw_mcp_servers.items()))
+        host = value.get("host", "github")
+        if host not in {"github", "forgejo"}:
+            raise ValueError("repo config host must be github or forgejo")
+        host_base_url = value.get("host_base_url")
+        if host == "forgejo":
+            host_base_url = _non_empty_string(host_base_url, "repo config host_base_url")
+        elif host_base_url is not None:
+            raise ValueError("repo config host_base_url is only valid for forgejo")
+        return cls(
+            repo,
+            runner,
+            dev,
+            main,
+            model,
+            tuple(raw_mcp_servers.items()),
+            host,
+            host_base_url,
+        )
 
 
 def parse_interval_seconds(value: Any) -> float:

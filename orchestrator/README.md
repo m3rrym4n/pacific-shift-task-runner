@@ -51,6 +51,10 @@ defaults to `/` in that workflow when omitted.
 Repositories may also set optional `model` and `mcp_servers` values. Variflex
 passes those into each spawned container as `CODEX_RUNNER_MODEL` and
 `CODEX_RUNNER_MCP_SERVERS`; runner-side consumption is tracked by issue #86.
+The optional `host` field accepts `github` (the default) or `forgejo`. Forgejo
+entries must also set `host_base_url` to the non-empty base URL of their Forgejo
+instance. GitHub entries must not set `host_base_url`. These fields are
+validated registry metadata only; dispatch does not consume them yet.
 
 The live repository configuration is maintained in
 [`deploy/repos.json`](deploy/repos.json). Set the environment variable from the
