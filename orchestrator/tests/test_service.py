@@ -335,6 +335,62 @@ def test_repo_registry_accepts_spawn_time_model_and_mcp_configuration(monkeypatc
     assert dict(repo.mcp_servers) == {"one": "http://one:7001/mcp"}
 
 
+def test_repo_config_defaults_to_github_host():
+    repo = RepoConfig.from_dict(
+        {
+            "repo": "owner/repo",
+            "runner": "codex",
+            "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+            "main": {"container": "main", "volume": "main-data", "port": 2},
+        }
+    )
+
+    assert repo.host == "github"
+    assert repo.host_base_url is None
+
+
+def test_repo_config_accepts_forgejo_host_with_base_url():
+    repo = RepoConfig.from_dict(
+        {
+            "repo": "owner/repo",
+            "runner": "codex",
+            "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+            "main": {"container": "main", "volume": "main-data", "port": 2},
+            "host": "forgejo",
+            "host_base_url": "https://forgejo.example.com",
+        }
+    )
+
+    assert repo.host == "forgejo"
+    assert repo.host_base_url == "https://forgejo.example.com"
+
+
+def test_repo_config_rejects_forgejo_host_without_base_url():
+    with pytest.raises(ValueError, match="host_base_url must be a non-empty string"):
+        RepoConfig.from_dict(
+            {
+                "repo": "owner/repo",
+                "runner": "codex",
+                "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+                "main": {"container": "main", "volume": "main-data", "port": 2},
+                "host": "forgejo",
+            }
+        )
+
+
+def test_repo_config_rejects_invalid_host():
+    with pytest.raises(ValueError, match="host must be github or forgejo"):
+        RepoConfig.from_dict(
+            {
+                "repo": "owner/repo",
+                "runner": "codex",
+                "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+                "main": {"container": "main", "volume": "main-data", "port": 2},
+                "host": "gitlab",
+            }
+        )
+
+
 def test_deploy_registry_carries_ff_runner_configuration(monkeypatch):
     registry = Path("deploy/repos.json").read_text()
     monkeypatch.setenv("TASK_RUNNER_REPOS", registry)
