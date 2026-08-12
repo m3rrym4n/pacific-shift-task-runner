@@ -132,14 +132,142 @@ Select `{type: github|forgejo, base_url, token}` from configuration and inject t
 
 Do not subclass `ForgejoClient` from `GitHubClient` or add provider branches to every method. Their route similarity makes a shared interface valuable, while their transport details make shared implementation inheritance brittle. A small common HTTP/error utility is reasonable if duplication appears during implementation.
 
-## Follow-up validation required before implementation
+## Authenticated validation
 
-With a repository-restricted Forgejo PAT in a disposable test repository:
+Issue [#113](https://github.com/m3rrym4n/variflex/issues/113) followed up on the schema-only findings above on 2026-08-12. The supplied PAT, with `write:repository` and `write:issue`, was tested against the same Forgejo `16.0.2+gitea-1.22.0` instance. All repository mutations were confined to the private disposable repository `m3rrym4n/variflex-issue-113-throwaway`.
 
-1. Verify the two-scope token (`write:repository`, `write:issue`) can perform every mapped operation and that read-only variants fail writes.
-2. Exercise full milestone CRUD, pagination, duplicate titles, invalid state, empty title, deadline clearing, and deletion when issues reference a milestone.
-3. Confirm PR head syntax for same-repository and fork branches, plus the workflow filename and `201`/`204` variants.
-4. Capture representative `401`, `403`, `404`, `409`, `422`, and archived-repository `423` errors for stable error translation.
-5. Create a test webhook and record the exact Actions-related event names, delivery/signature headers, retries, and payloads emitted by this Forgejo configuration.
+### Milestone CRUD and deadline clearing
+
+The authenticated results confirm that the update operation is `PATCH`, not `PUT`. The exact requests and responses were:
+
+```http
+POST /api/v1/repos/m3rrym4n/variflex-issue-113-throwaway/milestones
+Content-Type: application/json
+
+{"title":"Issue 113 validation","description":"Initial milestone for authenticated CRUD validation","due_on":"2026-09-01T12:00:00Z","state":"open"}
+
+HTTP/1.1 201 Created
+{"id":1,"title":"Issue 113 validation","description":"Initial milestone for authenticated CRUD validation","state":"open","open_issues":0,"closed_issues":0,"created_at":"2026-08-12T01:25:12Z","updated_at":"2026-08-12T01:25:12Z","closed_at":null,"due_on":"2026-09-01T12:00:00Z"}
+```
+
+```http
+PATCH /api/v1/repos/m3rrym4n/variflex-issue-113-throwaway/milestones/1
+Content-Type: application/json
+
+{"title":"Issue 113 validation edited","description":"Edited title, description, due date, and state","due_on":"2026-10-15T18:30:00Z","state":"closed"}
+
+HTTP/1.1 200 OK
+{"id":1,"title":"Issue 113 validation edited","description":"Edited title, description, due date, and state","state":"closed","open_issues":0,"closed_issues":0,"created_at":"2026-08-12T01:25:12Z","updated_at":"2026-08-12T01:25:12Z","closed_at":"2026-08-12T01:25:12Z","due_on":"2026-10-15T18:30:00Z"}
+```
+
+Sending JSON `null` does **not** clear the deadline on this version. Forgejo returned `200` but silently retained the old value:
+
+```http
+PATCH /api/v1/repos/m3rrym4n/variflex-issue-113-throwaway/milestones/1
+Content-Type: application/json
+
+{"due_on":null}
+
+HTTP/1.1 200 OK
+{"id":1,"title":"Issue 113 validation edited","description":"Edited title, description, due date, and state","state":"closed","open_issues":0,"closed_issues":0,"created_at":"2026-08-12T01:25:12Z","updated_at":"2026-08-12T01:25:12Z","closed_at":"2026-08-12T01:25:12Z","due_on":"2026-10-15T18:30:00Z"}
+```
+
+```http
+DELETE /api/v1/repos/m3rrym4n/variflex-issue-113-throwaway/milestones/1
+
+HTTP/1.1 204 No Content
+```
+
+The create, edit, state transition, and delete operations therefore work with the documented verbs and shapes. A client must not report deadline clearing as successful merely because the null-valued patch returns `200`; it should either omit that capability for Forgejo 16 or verify the returned `due_on`.
+
+### Same-repository pull request syntax
+
+The repository was initialized with `main`, an `issue-113-pr-head` branch was created, and a file commit was added on that branch. This request succeeded:
+
+```http
+POST /api/v1/repos/m3rrym4n/variflex-issue-113-throwaway/pulls
+Content-Type: application/json
+
+{"title":"Issue 113 same-repository PR validation","body":"Throwaway PR used only to validate Forgejo head/base syntax.","head":"issue-113-pr-head","base":"main"}
+
+HTTP/1.1 201 Created
+```
+
+The response had `number: 1`, `state: "open"`, `base.ref: "main"`, `head.ref: "issue-113-pr-head"`, and `mergeable: true`. Plain branch names are therefore the correct `head` and `base` format for a same-repository PR; an owner-qualified head is not required. Cross-fork syntax was not tested because the acceptance criteria made it optional and creating another user/fork would add unrelated setup and cleanup risk.
+
+### Observed webhook event and payload
+
+A repository hook of type `forgejo`, active for `events: ["push"]`, delivered two real events to a temporary external capture endpoint: branch creation and the subsequent file commit. Both used:
+
+```text
+X-Forgejo-Event: push
+X-Forgejo-Event-Type: push
+X-Forgejo-Delivery: <UUID unique to the delivery>
+X-Forgejo-Signature: <hex HMAC-SHA-256>
+Content-Type: application/json
+```
+
+The instance also sent the Gitea, Gogs, and GitHub compatibility event/delivery headers and `X-Hub-Signature-256`, but the native Forgejo headers above remain the appropriate integration contract. Signature and delivery values are omitted because they are per-delivery verification data rather than stable API values.
+
+The commit push payload was a 6,419-byte JSON object with this top-level shape:
+
+```json
+{
+  "ref": "refs/heads/issue-113-pr-head",
+  "before": "a65d9f64cc1e01c3427a1657b468eb31ff1b6ab8",
+  "after": "30bf7b0c13a4086760d139c38fa81e0f8d82e089",
+  "compare_url": "http://192.168.1.73:3001/m3rrym4n/variflex-issue-113-throwaway/compare/a65d9f64cc1e01c3427a1657b468eb31ff1b6ab8...30bf7b0c13a4086760d139c38fa81e0f8d82e089",
+  "commits": [
+    {
+      "id": "30bf7b0c13a4086760d139c38fa81e0f8d82e089",
+      "message": "Add validation marker\n",
+      "url": "http://192.168.1.73:3001/m3rrym4n/variflex-issue-113-throwaway/commit/30bf7b0c13a4086760d139c38fa81e0f8d82e089",
+      "author": {"name": "m3rrym4n", "email": "<account email>", "username": "m3rrym4n"},
+      "committer": {"name": "m3rrym4n", "email": "<account email>", "username": "m3rrym4n"},
+      "verification": null,
+      "timestamp": "2026-08-12T01:25:13Z",
+      "added": ["validation.txt"],
+      "removed": [],
+      "modified": []
+    }
+  ],
+  "total_commits": 1,
+  "head_commit": "<same commit object>",
+  "repository": "<Forgejo repository object>",
+  "pusher": "<Forgejo user object>",
+  "sender": "<Forgejo user object>"
+}
+```
+
+The branch-creation payload used the same shape with an all-zero `before`, the new branch tip in `after`, an empty `commits` array, `total_commits: 0`, and the initial commit in `head_commit`. Part 10 should parse the native `push` name, deduplicate on `X-Forgejo-Delivery`, verify `X-Forgejo-Signature` against the raw body, and normalize only the payload fields it actually needs.
+
+### Observed error envelopes
+
+The exact error bodies show a consistent top-level `message` and Swagger `url`, with `errors` present only in the observed 404:
+
+| Status and trigger | Exact response body |
+| --- | --- |
+| `401`, `GET /api/v1/user` without a token | `{"message":"token is required","url":"http://192.168.1.73:3001/api/swagger"}` |
+| `403`, `POST /api/v1/admin/users/m3rrym4n/tokens` with this non-`write:admin` PAT | `{"message":"token does not have at least one of required scope(s): [write:admin]","url":"http://192.168.1.73:3001/api/swagger"}` |
+| `404`, `GET /api/v1/repos/m3rrym4n/variflex-issue-113-throwaway/milestones/99999999` | `{"message":"The target couldn't be found.","url":"http://192.168.1.73:3001/api/swagger","errors":[]}` |
+| `422`, milestone creation with `{"title":"Malformed deadline","due_on":"definitely-not-a-date"}` | `{"message":"[]: parsing time \"definitely-not-a-date\" as \"2006-01-02T15:04:05Z07:00\": cannot parse \"definitely-not-a-date\" as \"2006\"","url":"http://192.168.1.73:3001/api/swagger"}` |
+
+Error translation should key primarily on HTTP status, retain `message` for diagnostics, and tolerate optional or differently shaped `errors`. It must not parse scope names or validation detail out of the human-readable message.
+
+### Cleanup and remaining limits
+
+The milestone was deleted (`204`), then the repository hook was explicitly deleted (`204`) before the entire disposable repository was deleted (`204`). The temporary external webhook capture inbox was also deleted. No test repository, hook, milestone, PR, branch, or capture endpoint remains.
+
+All five requested authenticated checks were completed. Only the optional cross-fork PR variant was skipped for the reason above. This validation covered repository `push` webhooks, not Forgejo Actions-specific events; a later Part 10 implementation should separately validate whichever Actions event it chooses to consume.
+
+## Remaining validation before implementation
+
+Issue #113 completed the core authenticated checks. The broader edge cases from the original spike remain useful before implementing the complete adapter:
+
+1. Verify read-only token variants fail writes and test the mapped workflow-dispatch operation.
+2. Exercise milestone pagination, duplicate titles, invalid state, empty title, and deletion when issues reference a milestone. Deadline clearing via JSON `null` is now known to be a no-op.
+3. Confirm cross-fork PR head syntax if Variflex needs that mode, plus workflow filename and `201`/`204` response variants.
+4. Capture representative `409` and archived-repository `423` responses; `401`, `403`, `404`, and `422` are now captured above.
+5. Record exact Actions-related event names, retry behavior, and payloads once Part 10 selects the event to consume. Native push-event headers and payloads are now confirmed.
 
 These are implementation prerequisites, not blockers to the conclusion of this documentation spike.
