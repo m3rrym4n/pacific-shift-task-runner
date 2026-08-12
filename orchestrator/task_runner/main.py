@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from .config import Settings
 from .database import Database
 from .dockhand import DockhandClient
+from .forgejo import ForgejoClient
 from .github import GitHubClient
 from .runner import RunnerClient
 from .service import TaskService
@@ -15,10 +16,20 @@ from .service import TaskService
 
 settings = Settings.from_env()
 database = Database(settings.database_path)
+git_hosts = {"github": GitHubClient(settings.github_token)}
+forgejo_base_urls = {
+    repo.host_base_url for repo in settings.repos if repo.host == "forgejo"
+}
+if len(forgejo_base_urls) > 1:
+    raise ValueError("Configured Forgejo repositories must use the same host_base_url")
+if forgejo_base_urls:
+    forgejo_base_url = forgejo_base_urls.pop()
+    assert forgejo_base_url is not None
+    git_hosts["forgejo"] = ForgejoClient(forgejo_base_url, settings.forgejo_token)
 service = TaskService(
     settings,
     database,
-    GitHubClient(settings.github_token),
+    git_hosts,
     RunnerClient(),
     DockhandClient(
         settings.dockhand_url,

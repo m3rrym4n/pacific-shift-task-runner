@@ -14,16 +14,27 @@ from task_runner.config import (
     parse_interval_seconds,
 )
 from task_runner.database import Database
+from task_runner.git_host import IssueContext
 from task_runner.service import TaskService
 from task_runner.dockhand import ContainerSnapshot, ContainerState
 
 
 class FakeGitHub:
-    def __init__(self):
+    def __init__(self, title="Test issue", body="acceptance criteria", agents="instructions"):
         self.workflow_dispatches = []
+        self.context_requests = []
+        self.file_requests = []
+        self.title = title
+        self.body = body
+        self.agents = agents
 
-    async def get_context(self, repo, issue_number):
-        return "instructions", "Test issue", "acceptance criteria"
+    async def get_issue_context(self, repo, issue_number):
+        self.context_requests.append((repo, issue_number))
+        return IssueContext(self.title, self.body)
+
+    async def get_text_file(self, repo, path, ref=None):
+        self.file_requests.append((repo, path, ref))
+        return self.agents
 
     async def dispatch_workflow(self, repo, workflow_id, ref, inputs=None):
         self.workflow_dispatches.append((repo, workflow_id, ref, inputs or {}))
@@ -258,7 +269,7 @@ def make_service(tmp_path, runner, dockhand=None, **overrides):
             for repo in settings.repos
             if repo.runner in settings.runners
         }
-    service = TaskService(settings, database, github, runner, lifecycle)
+    service = TaskService(settings, database, {"github": github}, runner, lifecycle)
     service.fake_github = github
     return service
 
@@ -472,6 +483,37 @@ async def test_real_dispatch_lifecycle_and_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_selects_forgejo_client_from_repo_host(tmp_path):
+    target = DeployTarget("app-dev", "app-dev-data", 8001)
+    repo = RepoConfig(
+        "owner/repo",
+        "codex",
+        target,
+        DeployTarget("app", "app-data", 8000),
+        host="forgejo",
+        host_base_url="https://forgejo.example.com",
+    )
+    runner = FakeRunner(result={"result": "structured report", "log": "abc"})
+    service = make_service(tmp_path, runner, repos=[repo])
+    github = FakeGitHub(title="Wrong host")
+    forgejo = FakeGitHub(
+        title="Forgejo issue", body="Forgejo acceptance criteria", agents="Forgejo instructions"
+    )
+    service.git_hosts = {"github": github, "forgejo": forgejo}
+
+    await service.run_task("owner/repo", 118, "codex")
+    await asyncio.gather(*service._jobs)
+
+    assert github.context_requests == []
+    assert forgejo.context_requests == [("owner/repo", 118)]
+    assert forgejo.file_requests == [("owner/repo", "AGENTS.md", None)]
+    assert "Forgejo instructions" in runner.prompt
+    assert "Forgejo issue" in runner.prompt
+    assert "https://forgejo.example.com/owner/repo" in runner.prompt
+    assert "GitHub issue" not in runner.prompt
+
+
+@pytest.mark.asyncio
 async def test_spawn_environment_includes_github_token(tmp_path):
     runner = FakeRunner(result={"result": "structured report", "log": "abc"})
     service = make_service(tmp_path, runner)
@@ -519,7 +561,7 @@ async def test_startup_resumes_running_task_and_records_completed_result(tmp_pat
     )
 
     runner = FakeRunner(result={"result": "structured report", "log": "finished log"})
-    service = TaskService(settings, database, FakeGitHub(), runner)
+    service = TaskService(settings, database, {"github": FakeGitHub()}, runner)
 
     service.resume_running_tasks()
     await asyncio.gather(*service._jobs)
@@ -542,7 +584,9 @@ async def test_startup_restores_pending_fifo_and_processes_in_order(tmp_path):
     runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed", "completed"]})
     dockhand = FakeDockhand()
     dockhand.url_by_repo = {"owner/repo": "http://runner"}
-    restarted = TaskService(service.settings, database, FakeGitHub(), runner, dockhand)
+    restarted = TaskService(
+        service.settings, database, {"github": FakeGitHub()}, runner, dockhand
+    )
     restarted.resume_running_tasks()
     for _ in range(100):
         if restarted.get_task_result("task-2")["status"] == "completed":
@@ -564,7 +608,9 @@ async def test_startup_restores_halt_state_and_does_not_process_pending(tmp_path
     )
 
     runner = FakeRunner()
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted = TaskService(
+        service.settings, service.database, {"github": FakeGitHub()}, runner
+    )
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
@@ -587,7 +633,13 @@ async def test_startup_reconciles_active_remote_execution_without_redispatch(tmp
     runner.current_status_by_execution["execution-1"] = "completed"
     dockhand = FakeDockhand()
     dockhand.url_by_repo = {"owner/repo": "http://runner"}
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner, dockhand)
+    restarted = TaskService(
+        service.settings,
+        service.database,
+        {"github": FakeGitHub()},
+        runner,
+        dockhand,
+    )
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
@@ -605,7 +657,9 @@ async def test_startup_fails_and_halts_active_task_without_execution_reference(t
     service.database.save_runner_queue("codex", ["pending"], "active", None, None, None)
 
     runner = FakeRunner()
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted = TaskService(
+        service.settings, service.database, {"github": FakeGitHub()}, runner
+    )
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
