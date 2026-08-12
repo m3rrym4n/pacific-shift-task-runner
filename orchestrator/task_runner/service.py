@@ -428,7 +428,10 @@ class TaskService:
             environment = {
                 "TASK_RUNNER_TASK_ID": task_id,
                 "TASK_RUNNER_TARGET_REPO": task["repo"],
+                "TASK_RUNNER_GIT_HOST": repo_config.host,
             }
+            if repo_config.host_base_url:
+                environment["TASK_RUNNER_GIT_HOST_BASE_URL"] = repo_config.host_base_url
             if repo_config.model:
                 environment["CODEX_RUNNER_MODEL"] = repo_config.model
             if repo_config.mcp_servers:
