@@ -13,7 +13,7 @@ from typing import Any, Literal
 from .config import OpsImageCheck, RepoConfig, ScheduledTask, Settings
 from .database import Database
 from .dockhand import ContainerDeployResult, ContainerSnapshot, DockhandClient
-from .github import GitHubClient
+from .git_host import GitHostClient
 from .ops_images import codex_runner_tag
 from .runner import RunnerClient
 
@@ -43,13 +43,13 @@ class TaskService:
         self,
         settings: Settings,
         database: Database,
-        github: GitHubClient,
+        git_hosts: dict[str, GitHostClient],
         runner: RunnerClient,
         dockhand: DockhandClient | None = None,
     ):
         self.settings = settings
         self.database = database
-        self.github = github
+        self.git_hosts = git_hosts
         self.runner = runner
         self.dockhand = dockhand
         self._jobs: set[asyncio.Task] = set()
@@ -467,8 +467,21 @@ class TaskService:
                     runner_url, task["repo"], task["issue_number"], prompt, task["session_id"]
                 )
             else:
-                agents, title, body = await self.github.get_context(task["repo"], task["issue_number"])
-                prompt = self.build_prompt(task["repo"], task["issue_number"], agents, title, body)
+                repo_config = self.get_repo_config(task["repo"])
+                git_host = self.git_hosts[repo_config.host]
+                issue = await git_host.get_issue_context(task["repo"], task["issue_number"])
+                agents = await git_host.get_text_file(task["repo"], "AGENTS.md")
+                agents = agents or "(No AGENTS.md found in the target repository.)"
+                title, body = issue.title, issue.body
+                prompt = self.build_prompt(
+                    task["repo"],
+                    task["issue_number"],
+                    agents,
+                    title,
+                    body,
+                    repo_config.host,
+                    repo_config.host_base_url,
+                )
                 self.database.update(task_id, status="dispatching", prompt=prompt, started_at=utcnow())
                 execution_id = await self.runner.execute(
                     runner_url, task["repo"], task["issue_number"], prompt
@@ -731,16 +744,28 @@ class TaskService:
         return shortened + marker, True
 
     @staticmethod
-    def build_prompt(repo: str, issue_number: int, agents: str, title: str, body: str) -> str:
+    def build_prompt(
+        repo: str,
+        issue_number: int,
+        agents: str,
+        title: str,
+        body: str,
+        host: str = "github",
+        host_base_url: str | None = None,
+    ) -> str:
+        host_name = "GitHub" if host == "github" else "Forgejo"
+        repo_location = (
+            repo if host_base_url is None else f"{host_base_url.rstrip('/')}/{repo}"
+        )
         return f"""# Task
 
-Work on GitHub issue #{issue_number} in {repo}.
+Work on {host_name} issue #{issue_number} in {repo_location}.
 
 ## Repository instructions (AGENTS.md)
 
 {agents}
 
-## GitHub issue #{issue_number}: {title}
+## {host_name} issue #{issue_number}: {title}
 
 {body}
 
