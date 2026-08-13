@@ -13,7 +13,7 @@ from typing import Any, Literal
 from .config import OpsImageCheck, RepoConfig, ScheduledTask, Settings
 from .database import Database
 from .dockhand import ContainerDeployResult, ContainerSnapshot, DockhandClient
-from .github import GitHubClient
+from .git_host import GitHostClient
 from .ops_images import codex_runner_tag
 from .runner import RunnerClient
 
@@ -43,13 +43,13 @@ class TaskService:
         self,
         settings: Settings,
         database: Database,
-        github: GitHubClient,
+        git_hosts: dict[str, GitHostClient],
         runner: RunnerClient,
         dockhand: DockhandClient | None = None,
     ):
         self.settings = settings
         self.database = database
-        self.github = github
+        self.git_hosts = git_hosts
         self.runner = runner
         self.dockhand = dockhand
         self._jobs: set[asyncio.Task] = set()
@@ -428,13 +428,18 @@ class TaskService:
             environment = {
                 "TASK_RUNNER_TASK_ID": task_id,
                 "TASK_RUNNER_TARGET_REPO": task["repo"],
+                "TASK_RUNNER_GIT_HOST": repo_config.host,
             }
+            if repo_config.host_base_url:
+                environment["TASK_RUNNER_GIT_HOST_BASE_URL"] = repo_config.host_base_url
             if repo_config.model:
                 environment["CODEX_RUNNER_MODEL"] = repo_config.model
             if repo_config.mcp_servers:
                 environment["CODEX_RUNNER_MCP_SERVERS"] = json.dumps(dict(repo_config.mcp_servers))
             if self.settings.github_token:
                 environment["GITHUB_TOKEN"] = self.settings.github_token
+            if self.settings.forgejo_token:
+                environment["FORGEJO_TOKEN"] = self.settings.forgejo_token
             self.database.update(task_id, status="spawning", runner_container=container_name)
             managed_container = True
             runner_url = await self.dockhand.spawn_runner(
@@ -465,8 +470,21 @@ class TaskService:
                     runner_url, task["repo"], task["issue_number"], prompt, task["session_id"]
                 )
             else:
-                agents, title, body = await self.github.get_context(task["repo"], task["issue_number"])
-                prompt = self.build_prompt(task["repo"], task["issue_number"], agents, title, body)
+                repo_config = self.get_repo_config(task["repo"])
+                git_host = self.git_hosts[repo_config.host]
+                issue = await git_host.get_issue_context(task["repo"], task["issue_number"])
+                agents = await git_host.get_text_file(task["repo"], "AGENTS.md")
+                agents = agents or "(No AGENTS.md found in the target repository.)"
+                title, body = issue.title, issue.body
+                prompt = self.build_prompt(
+                    task["repo"],
+                    task["issue_number"],
+                    agents,
+                    title,
+                    body,
+                    repo_config.host,
+                    repo_config.host_base_url,
+                )
                 self.database.update(task_id, status="dispatching", prompt=prompt, started_at=utcnow())
                 execution_id = await self.runner.execute(
                     runner_url, task["repo"], task["issue_number"], prompt
@@ -527,7 +545,7 @@ class TaskService:
                 )
             log_parts.append(f"Verified required auth volume before deploy: {check.auth_volume}")
             if not self.settings.github_token:
-                raise RuntimeError("GITHUB_TOKEN is required to clone the codex-runner source")
+                raise RuntimeError("GITHUB_TOKEN is required to clone the Variflex runner source")
             credentials = base64.b64encode(
                 f"x-access-token:{self.settings.github_token}".encode()
             ).decode()
@@ -536,8 +554,9 @@ class TaskService:
                 "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
                 "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credentials}",
             }
-            with tempfile.TemporaryDirectory(prefix="codex-runner-build-") as workspace:
-                source_dir = os.path.join(workspace, "codex-runner")
+            with tempfile.TemporaryDirectory(prefix="variflex-runner-build-") as workspace:
+                repo_dir = os.path.join(workspace, "variflex")
+                source_dir = os.path.join(repo_dir, "runner")
                 clone_command = [
                     "git",
                     "clone",
@@ -546,8 +565,8 @@ class TaskService:
                     "--branch",
                     "main",
                     "--single-branch",
-                    "https://github.com/m3rrym4n/codex-runner.git",
-                    source_dir,
+                    "https://github.com/m3rrym4n/variflex.git",
+                    repo_dir,
                 ]
                 log_parts.append(await self._run_command(clone_command, env=git_env))
                 build_command = [
@@ -728,16 +747,28 @@ class TaskService:
         return shortened + marker, True
 
     @staticmethod
-    def build_prompt(repo: str, issue_number: int, agents: str, title: str, body: str) -> str:
+    def build_prompt(
+        repo: str,
+        issue_number: int,
+        agents: str,
+        title: str,
+        body: str,
+        host: str = "github",
+        host_base_url: str | None = None,
+    ) -> str:
+        host_name = "GitHub" if host == "github" else "Forgejo"
+        repo_location = (
+            repo if host_base_url is None else f"{host_base_url.rstrip('/')}/{repo}"
+        )
         return f"""# Task
 
-Work on GitHub issue #{issue_number} in {repo}.
+Work on {host_name} issue #{issue_number} in {repo_location}.
 
 ## Repository instructions (AGENTS.md)
 
 {agents}
 
-## GitHub issue #{issue_number}: {title}
+## {host_name} issue #{issue_number}: {title}
 
 {body}
 
@@ -753,7 +784,7 @@ Runner queue: {check.runner}
 Installed Codex version: {installed}
 Target Codex version: {target}
 
-This is an internal maintenance job created by Task Runner after version drift
+This is an internal maintenance job created by Variflex after version drift
 was detected. It is tied to the configured trace issue so every rebuild cycle
 has a durable written reference in the normal task log/result model.
 """

@@ -14,16 +14,27 @@ from task_runner.config import (
     parse_interval_seconds,
 )
 from task_runner.database import Database
+from task_runner.git_host import IssueContext
 from task_runner.service import TaskService
 from task_runner.dockhand import ContainerSnapshot, ContainerState
 
 
 class FakeGitHub:
-    def __init__(self):
+    def __init__(self, title="Test issue", body="acceptance criteria", agents="instructions"):
         self.workflow_dispatches = []
+        self.context_requests = []
+        self.file_requests = []
+        self.title = title
+        self.body = body
+        self.agents = agents
 
-    async def get_context(self, repo, issue_number):
-        return "instructions", "Test issue", "acceptance criteria"
+    async def get_issue_context(self, repo, issue_number):
+        self.context_requests.append((repo, issue_number))
+        return IssueContext(self.title, self.body)
+
+    async def get_text_file(self, repo, path, ref=None):
+        self.file_requests.append((repo, path, ref))
+        return self.agents
 
     async def dispatch_workflow(self, repo, workflow_id, ref, inputs=None):
         self.workflow_dispatches.append((repo, workflow_id, ref, inputs or {}))
@@ -258,7 +269,7 @@ def make_service(tmp_path, runner, dockhand=None, **overrides):
             for repo in settings.repos
             if repo.runner in settings.runners
         }
-    service = TaskService(settings, database, github, runner, lifecycle)
+    service = TaskService(settings, database, {"github": github}, runner, lifecycle)
     service.fake_github = github
     return service
 
@@ -335,6 +346,62 @@ def test_repo_registry_accepts_spawn_time_model_and_mcp_configuration(monkeypatc
     assert dict(repo.mcp_servers) == {"one": "http://one:7001/mcp"}
 
 
+def test_repo_config_defaults_to_github_host():
+    repo = RepoConfig.from_dict(
+        {
+            "repo": "owner/repo",
+            "runner": "codex",
+            "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+            "main": {"container": "main", "volume": "main-data", "port": 2},
+        }
+    )
+
+    assert repo.host == "github"
+    assert repo.host_base_url is None
+
+
+def test_repo_config_accepts_forgejo_host_with_base_url():
+    repo = RepoConfig.from_dict(
+        {
+            "repo": "owner/repo",
+            "runner": "codex",
+            "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+            "main": {"container": "main", "volume": "main-data", "port": 2},
+            "host": "forgejo",
+            "host_base_url": "https://forgejo.example.com",
+        }
+    )
+
+    assert repo.host == "forgejo"
+    assert repo.host_base_url == "https://forgejo.example.com"
+
+
+def test_repo_config_rejects_forgejo_host_without_base_url():
+    with pytest.raises(ValueError, match="host_base_url must be a non-empty string"):
+        RepoConfig.from_dict(
+            {
+                "repo": "owner/repo",
+                "runner": "codex",
+                "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+                "main": {"container": "main", "volume": "main-data", "port": 2},
+                "host": "forgejo",
+            }
+        )
+
+
+def test_repo_config_rejects_invalid_host():
+    with pytest.raises(ValueError, match="host must be github or forgejo"):
+        RepoConfig.from_dict(
+            {
+                "repo": "owner/repo",
+                "runner": "codex",
+                "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+                "main": {"container": "main", "volume": "main-data", "port": 2},
+                "host": "gitlab",
+            }
+        )
+
+
 def test_deploy_registry_carries_ff_runner_configuration(monkeypatch):
     registry = Path("deploy/repos.json").read_text()
     monkeypatch.setenv("TASK_RUNNER_REPOS", registry)
@@ -382,9 +449,9 @@ def test_settings_reads_ops_image_checks(monkeypatch):
             "owner/repo",
             35,
             "zot.lan:5000",
-            "codex-runner",
-            "codex-runner",
-            "codex-runner",
+            "variflex-runner",
+            "variflex-runner",
+            "variflex-runner",
             "pacific-shift-codex-runner-auth",
             "unix:///run/buildkit/buildkitd.sock",
             "unknown",
@@ -416,6 +483,40 @@ async def test_real_dispatch_lifecycle_and_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_selects_forgejo_client_from_repo_host(tmp_path):
+    target = DeployTarget("app-dev", "app-dev-data", 8001)
+    repo = RepoConfig(
+        "owner/repo",
+        "codex",
+        target,
+        DeployTarget("app", "app-data", 8000),
+        host="forgejo",
+        host_base_url="https://forgejo.example.com",
+    )
+    runner = FakeRunner(result={"result": "structured report", "log": "abc"})
+    service = make_service(tmp_path, runner, repos=[repo])
+    github = FakeGitHub(title="Wrong host")
+    forgejo = FakeGitHub(
+        title="Forgejo issue", body="Forgejo acceptance criteria", agents="Forgejo instructions"
+    )
+    service.git_hosts = {"github": github, "forgejo": forgejo}
+
+    await service.run_task("owner/repo", 118, "codex")
+    await asyncio.gather(*service._jobs)
+
+    assert github.context_requests == []
+    assert forgejo.context_requests == [("owner/repo", 118)]
+    assert forgejo.file_requests == [("owner/repo", "AGENTS.md", None)]
+    assert "Forgejo instructions" in runner.prompt
+    assert "Forgejo issue" in runner.prompt
+    assert "https://forgejo.example.com/owner/repo" in runner.prompt
+    assert "GitHub issue" not in runner.prompt
+    environment = service.dockhand.spawned[0]["environment"]
+    assert environment["TASK_RUNNER_GIT_HOST"] == "forgejo"
+    assert environment["TASK_RUNNER_GIT_HOST_BASE_URL"] == "https://forgejo.example.com"
+
+
+@pytest.mark.asyncio
 async def test_spawn_environment_includes_github_token(tmp_path):
     runner = FakeRunner(result={"result": "structured report", "log": "abc"})
     service = make_service(tmp_path, runner)
@@ -423,6 +524,8 @@ async def test_spawn_environment_includes_github_token(tmp_path):
     await asyncio.gather(*service._jobs)
 
     assert service.dockhand.spawned[0]["environment"]["GITHUB_TOKEN"] == "test-token"
+    assert service.dockhand.spawned[0]["environment"]["TASK_RUNNER_GIT_HOST"] == "github"
+    assert "TASK_RUNNER_GIT_HOST_BASE_URL" not in service.dockhand.spawned[0]["environment"]
 
 
 @pytest.mark.asyncio
@@ -463,7 +566,7 @@ async def test_startup_resumes_running_task_and_records_completed_result(tmp_pat
     )
 
     runner = FakeRunner(result={"result": "structured report", "log": "finished log"})
-    service = TaskService(settings, database, FakeGitHub(), runner)
+    service = TaskService(settings, database, {"github": FakeGitHub()}, runner)
 
     service.resume_running_tasks()
     await asyncio.gather(*service._jobs)
@@ -486,7 +589,9 @@ async def test_startup_restores_pending_fifo_and_processes_in_order(tmp_path):
     runner = SequencedPerRunnerStatusRunner({"http://runner": ["completed", "completed"]})
     dockhand = FakeDockhand()
     dockhand.url_by_repo = {"owner/repo": "http://runner"}
-    restarted = TaskService(service.settings, database, FakeGitHub(), runner, dockhand)
+    restarted = TaskService(
+        service.settings, database, {"github": FakeGitHub()}, runner, dockhand
+    )
     restarted.resume_running_tasks()
     for _ in range(100):
         if restarted.get_task_result("task-2")["status"] == "completed":
@@ -508,7 +613,9 @@ async def test_startup_restores_halt_state_and_does_not_process_pending(tmp_path
     )
 
     runner = FakeRunner()
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted = TaskService(
+        service.settings, service.database, {"github": FakeGitHub()}, runner
+    )
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
@@ -531,7 +638,13 @@ async def test_startup_reconciles_active_remote_execution_without_redispatch(tmp
     runner.current_status_by_execution["execution-1"] = "completed"
     dockhand = FakeDockhand()
     dockhand.url_by_repo = {"owner/repo": "http://runner"}
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner, dockhand)
+    restarted = TaskService(
+        service.settings,
+        service.database,
+        {"github": FakeGitHub()},
+        runner,
+        dockhand,
+    )
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
@@ -549,7 +662,9 @@ async def test_startup_fails_and_halts_active_task_without_execution_reference(t
     service.database.save_runner_queue("codex", ["pending"], "active", None, None, None)
 
     runner = FakeRunner()
-    restarted = TaskService(service.settings, service.database, FakeGitHub(), runner)
+    restarted = TaskService(
+        service.settings, service.database, {"github": FakeGitHub()}, runner
+    )
     restarted.resume_running_tasks()
     await asyncio.gather(*restarted._jobs)
 
@@ -917,18 +1032,19 @@ async def test_ops_image_check_enqueues_issue_backed_rebuild_on_codex_version_dr
     assert tasks[0]["issue_number"] == 35
     assert tasks[0]["status"] == "completed"
     assert commands[0][:7] == ["git", "clone", "--depth", "1", "--branch", "main", "--single-branch"]
-    assert commands[0][7] == "https://github.com/m3rrym4n/codex-runner.git"
+    assert commands[0][7] == "https://github.com/m3rrym4n/variflex.git"
     assert command_options[0]["env"]["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
     assert "test-token" not in " ".join(commands[0])
-    source_dir = commands[0][8]
+    repo_dir = commands[0][8]
+    source_dir = os.path.join(repo_dir, "runner")
     assert commands[1][:5] == ["buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build", "--frontend"]
     assert f"context={source_dir}" in commands[1]
     assert f"dockerfile={source_dir}" in commands[1]
-    assert "context=/app/codex_runner" not in commands[1]
-    assert "dockerfile=/app/codex_runner" not in commands[1]
+    assert "context=/app/runner" not in commands[1]
+    assert "dockerfile=/app/runner" not in commands[1]
     assert "type=image,name=zot.lan:5000/codex-runner:0.144.1-abc1234,push=true" in commands[1]
     assert commands[2][:4] == ["python", "/app/scripts/prune_zot_image_tags.py", "--registry", "https://zot.lan:5000"]
-    assert not os.path.exists(os.path.dirname(source_dir))
+    assert not os.path.exists(repo_dir)
     assert dockhand.deploys == [("codex-runner", "codex-runner")]
     assert dockhand.pulls == ["zot.lan:5000/codex-runner:0.144.1-abc1234"]
     assert dockhand.volume_checks == [
